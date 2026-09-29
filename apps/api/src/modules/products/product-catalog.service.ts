@@ -19,10 +19,58 @@ export function isVariationOrderable(input: {
   );
 }
 
+export interface CatalogProductVariation {
+  websiteVariationId: number;
+  websiteSizeId: number;
+  sizeName: string;
+  stockQuantity: number;
+  active: boolean;
+}
+
+export interface CatalogSearchProduct {
+  id: number;
+  internalId: string;
+  productName: string;
+  productCode: string;
+  slug: string;
+  productStatus: string;
+  active: boolean;
+  sellPrice: string;
+  discountPrice: string | null;
+  flashSellPrice: string | null;
+  isPreOrder: boolean;
+  image: string | null;
+  color: string | null;
+  category: string | null;
+  subCategory: string | null;
+  variations: CatalogProductVariation[];
+}
+
+export type AvailabilityType = 'in_stock' | 'pre_order' | 'unavailable';
+
+export interface ProductAvailability {
+  id: number;
+  productName: string;
+  productCode: string;
+  productStatus: string;
+  active: boolean;
+  presentInFeed: boolean;
+  isPreOrder: boolean;
+  sizes: Array<{
+    websiteVariationId: number;
+    websiteSizeId: number;
+    sizeName: string;
+    stock: number;
+    active: boolean;
+    orderable: boolean;
+    availabilityType: AvailabilityType;
+  }>;
+}
+
 export class ProductCatalogService {
   constructor(private readonly prisma: PrismaClient) {}
 
-  async searchProducts(query: string, requestedLimit = 10) {
+  async searchProducts(query: string, requestedLimit = 10): Promise<CatalogSearchProduct[]> {
     const normalizedQuery = query.trim().slice(0, 100);
     if (!normalizedQuery) return [];
     const limit = Math.min(Math.max(requestedLimit, 1), 50);
@@ -56,6 +104,9 @@ export class ProductCatalogService {
       flashSellPrice: product.flashSellPrice?.toFixed(2) ?? null,
       isPreOrder: product.isPreOrder,
       image: product.productImage,
+      color: product.colorName,
+      category: product.categoryName,
+      subCategory: product.subCategoryName,
       variations: product.variations.map((variation) => ({
         websiteVariationId: variation.websiteVariationId,
         websiteSizeId: variation.websiteSizeId,
@@ -66,7 +117,7 @@ export class ProductCatalogService {
     }));
   }
 
-  async getProductAvailability(websiteProductId: number) {
+  async getProductAvailability(websiteProductId: number): Promise<ProductAvailability | null> {
     const product = await this.prisma.product.findUnique({
       where: { websiteProductId },
       include: { variations: { orderBy: { websiteSizeId: 'asc' } } },
@@ -83,19 +134,29 @@ export class ProductCatalogService {
       active: productActive,
       presentInFeed: product.presentInFeed,
       isPreOrder: product.isPreOrder,
-      sizes: product.variations.map((variation) => ({
-        websiteVariationId: variation.websiteVariationId,
-        websiteSizeId: variation.websiteSizeId,
-        sizeName: variation.sizeName,
-        stock: variation.stockQuantity,
-        active: variation.active,
-        orderable: isVariationOrderable({
+      sizes: product.variations.map((variation) => {
+        const orderable = isVariationOrderable({
           stockQuantity: variation.stockQuantity,
           variationActive: variation.active,
           productActive,
           isPreOrder: product.isPreOrder,
-        }),
-      })),
+        });
+        const availabilityType: AvailabilityType = !orderable
+          ? 'unavailable'
+          : variation.stockQuantity > 0
+            ? 'in_stock'
+            : 'pre_order';
+
+        return {
+          websiteVariationId: variation.websiteVariationId,
+          websiteSizeId: variation.websiteSizeId,
+          sizeName: variation.sizeName,
+          stock: variation.stockQuantity,
+          active: variation.active,
+          orderable,
+          availabilityType,
+        };
+      }),
     };
   }
 }

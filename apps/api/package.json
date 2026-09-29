@@ -17,6 +17,7 @@
   "dependencies": {
     "@alzeena/database": "*",
     "@fastify/cors": "^11.1.0",
+    "@google/genai": "^2.24.0",
     "bullmq": "^6.3.10",
     "dotenv": "^17.2.3",
     "fastify": "^5.6.1",

@@ -1,8 +1,8 @@
 # Alzeena Fashion Sales Agent
 
-Production-oriented foundation for the future Alzeena Fashion AI sales agent. The repository currently contains **Steps 1–4**: the web application, API, infrastructure configuration, PostgreSQL/Prisma data layer, local product-feed synchronization, and protected Knowledge Base/business settings management.
+Production-oriented foundation for the future Alzeena Fashion AI sales agent. The repository currently contains **Steps 1–5**: the web application, API, infrastructure configuration, PostgreSQL/Prisma data layer, product-feed synchronization, protected Knowledge Base/business settings management, and the modular Gemini-backed AI core.
 
-Step 4 adds focused admin pages and protected APIs for AI instructions and non-sensitive business settings. It does not call an AI model or add messaging, orders, conversations, handover workflows, or a full analytics dashboard.
+Step 5 adds intent routing, cost-controlled rule responses, local product context, prompt construction, structured Gemini output, safe fallback behavior, and a protected test API. It does not add Facebook, orders, image/voice processing, customer persistence, or a human-handover workflow.
 
 ## Architecture
 
@@ -24,7 +24,7 @@ Step 4 adds focused admin pages and protected APIs for AI instructions and non-s
 └── tsconfig.base.json          # Shared TypeScript rules
 ```
 
-Future modules (AI/Gemini, Facebook Messenger, orders, image/voice processing, conversations, and human handover) should be introduced as isolated API modules and/or workers. Product synchronization and admin Knowledge Base/settings management remain separate modules so dynamic catalogue data is never mixed into manually authored AI instructions.
+Future channels and capabilities (Facebook Messenger, orders, image/voice processing, persistent conversations, and human handover) should be introduced as isolated modules. The AI provider, orchestration, prompt construction, local product context, and admin-managed instructions remain separate so providers and channels can change independently.
 
 ## Step 2 database models
 
@@ -125,6 +125,44 @@ Each Knowledge Base save creates a new active version and retains the prior vers
 Settings are strictly allow-listed. Delivery charges are validated as non-negative BDT amounts; environment secrets such as Gemini/Meta keys and the admin password cannot be read or updated through these APIs. Future AI context code can import `getActiveKnowledgeBase()` and `getBusinessSettings()` without coupling to HTTP routes.
 
 Run `npm run db:seed` after updating to Step 4. It installs the starter Knowledge Base only when content is absent or still equals the old test placeholder, and initializes the known setting values without overwriting later admin edits.
+
+## Step 5 AI core and Gemini
+
+```text
+Caller → AIService → intent/cost router
+                    ├─ KnowledgeBaseService
+                    ├─ SettingsService
+                    ├─ ProductContextService → local PostgreSQL catalogue/availability
+                    ├─ RuleResponseService (safe simple requests, no Gemini cost)
+                    └─ PromptBuilder → AIProvider → GeminiProvider
+                                           ↓
+                              validated structured response
+```
+
+The integration uses Google's official `@google/genai` SDK and `responseJsonSchema` structured output. Gemini is isolated behind the `AIProvider` interface, and `createAIService()` is reusable by future channels. Greetings, delivery charges, direct product lookup, prices, stock and sizes use deterministic local rules where safe. Complex policy, recommendation, and general questions use Gemini.
+
+The protected, rate-limited development endpoint is:
+
+```text
+POST /api/ai/test
+```
+
+Example:
+
+```bash
+curl -X POST http://localhost:4000/api/ai/test \
+  -H "content-type: application/json" \
+  -H "x-admin-password: $ADMIN_PASSWORD" \
+  --data '{
+    "message": "APL26 Messi polo ache?",
+    "language": "auto",
+    "conversationHistory": []
+  }'
+```
+
+Conversation history is caller-provided only and capped before prompting; Step 5 creates no conversation/customer tables. Product searches call PostgreSQL, never the external product feed. Model output is schema-validated, safely extracted from JSON/code fences when practical, and retried once after malformed output. Provider/configuration failures return a short human-assistance fallback instead of crashing.
+
+AI logs contain intent, provider/model, latency, search flag, product count, handover flag and message length. They do not contain API keys, passwords, tokens, or raw customer messages.
 
 ## Prerequisites
 
@@ -250,17 +288,24 @@ Run the compiled backend with `npm run start --workspace=@alzeena/api`. Run the 
 
 ## Environment variables
 
-| Variable | Purpose | Step 1 usage |
+| Variable | Purpose | Status |
 | --- | --- | --- |
 | `NODE_ENV` | Runtime mode | Used |
 | `API_HOST`, `API_PORT` | API bind address and port | Used |
 | `LOG_LEVEL` | Structured API log level | Used |
 | `FRONTEND_URL` | Allowed browser origin for API CORS | Used |
-| `NEXT_PUBLIC_API_BASE_URL` | Browser-visible API URL | Reserved |
+| `NEXT_PUBLIC_API_BASE_URL` | Backend URL used by the Next.js server proxy | Used |
 | `DATABASE_URL` | PostgreSQL connection string | Used |
 | `REDIS_URL` | Redis connection string | Used |
-| `ADMIN_PASSWORD` | Header credential for protected manual sync operations | Used |
-| `GEMINI_API_KEY` | Future Gemini integration | Reserved |
+| `ADMIN_PASSWORD` | Header credential for protected admin/sync/AI test operations | Used |
+| `GEMINI_API_KEY` | Gemini API credential; optional for rule-only responses | Used by AI provider |
+| `GEMINI_MODEL` | Configurable Gemini model name | Used by AI provider |
+| `GEMINI_TEMPERATURE` | Gemini generation temperature | Used by AI provider |
+| `GEMINI_MAX_OUTPUT_TOKENS` | Gemini response token ceiling | Used by AI provider |
+| `GEMINI_TIMEOUT_MS` | Gemini request timeout | Used by AI provider |
+| `AI_MAX_HISTORY_MESSAGES` | Recent caller-provided messages sent to the model | Used |
+| `AI_MAX_PRODUCTS` | Maximum relevant local products in model context | Used |
+| `AI_TEST_RATE_LIMIT_PER_MINUTE` | Per-process test endpoint limit | Used |
 | `META_PAGE_ACCESS_TOKEN` | Future Meta integration | Reserved |
 | `META_APP_SECRET` | Future Meta integration | Reserved |
 | `META_VERIFY_TOKEN` | Future webhook verification | Reserved |

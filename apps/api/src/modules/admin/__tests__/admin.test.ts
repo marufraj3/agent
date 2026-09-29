@@ -101,3 +101,19 @@ test('Knowledge Base API denies unauthenticated requests before database access'
   assert.equal(settingsResponse.statusCode, 401);
   await app.close();
 });
+
+test('AI test API denies unauthenticated requests before AI or database access', async () => {
+  const { aiTestRoutes } = await import('../../ai/routes/ai-test.routes.js');
+  const app = Fastify();
+  app.decorate('prisma', {} as never);
+  await app.register(aiTestRoutes);
+
+  const response = await app.inject({
+    method: 'POST',
+    url: '/api/ai/test',
+    payload: { message: 'Hello' },
+  });
+
+  assert.equal(response.statusCode, 401);
+  await app.close();
+});
