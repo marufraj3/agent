@@ -136,3 +136,87 @@ model SystemLog {
   @@index([createdAt])
   @@map("system_logs")
 }
+
+enum ConversationChannel {
+  WEB       @map("web")
+  MESSENGER @map("messenger")
+  ADMIN     @map("admin")
+  TEST      @map("test")
+}
+
+enum ConversationStatus {
+  ACTIVE @map("active")
+  CLOSED @map("closed")
+  HUMAN  @map("human")
+}
+
+enum MessageRole {
+  USER      @map("user")
+  ASSISTANT @map("assistant")
+  SYSTEM    @map("system")
+  HUMAN     @map("human")
+}
+
+enum MessageType {
+  TEXT   @map("text")
+  IMAGE  @map("image")
+  AUDIO  @map("audio")
+  SYSTEM @map("system")
+}
+
+model Customer {
+  id             String         @id @default(uuid()) @db.Uuid
+  externalId     String?        @unique @map("external_id") @db.VarChar(255)
+  name           String?        @db.VarChar(255)
+  phone          String?        @db.VarChar(50)
+  email          String?        @db.VarChar(320)
+  platform       String?        @db.VarChar(50)
+  platformUserId String?        @map("platform_user_id") @db.VarChar(255)
+  language       String?        @db.VarChar(20)
+  metadata       Json?          @db.JsonB
+  createdAt      DateTime       @default(now()) @map("created_at")
+  updatedAt      DateTime       @updatedAt @map("updated_at")
+  conversations  Conversation[]
+  messages       Message[]
+
+  @@unique([platform, platformUserId])
+  @@index([platformUserId])
+  @@index([createdAt])
+  @@map("customers")
+}
+
+model Conversation {
+  id            String             @id @default(uuid()) @db.Uuid
+  customerId    String             @map("customer_id") @db.Uuid
+  channel       ConversationChannel
+  status        ConversationStatus @default(ACTIVE)
+  title         String?            @db.VarChar(255)
+  lastMessageAt DateTime           @default(now()) @map("last_message_at")
+  createdAt     DateTime           @default(now()) @map("created_at")
+  updatedAt     DateTime           @updatedAt @map("updated_at")
+  customer      Customer           @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  messages      Message[]
+
+  @@index([customerId, status, lastMessageAt])
+  @@index([channel, status, lastMessageAt])
+  @@index([lastMessageAt])
+  @@map("conversations")
+}
+
+model Message {
+  id             String       @id @default(uuid()) @db.Uuid
+  conversationId String       @map("conversation_id") @db.Uuid
+  customerId     String?      @map("customer_id") @db.Uuid
+  role           MessageRole
+  content        String       @db.Text
+  messageType    MessageType  @default(TEXT) @map("message_type")
+  metadata       Json?        @db.JsonB
+  createdAt      DateTime     @default(now()) @map("created_at")
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  customer       Customer?    @relation(fields: [customerId], references: [id], onDelete: SetNull)
+
+  @@index([conversationId, createdAt])
+  @@index([customerId, createdAt])
+  @@index([createdAt])
+  @@map("messages")
+}

@@ -14,6 +14,7 @@ export interface ProductContextResult {
   products: AIProductContext[];
   searchPerformed: boolean;
   searchTerms: string[];
+  currentSearchTerms: string[];
 }
 
 const STOP_WORDS = new Set([
@@ -60,6 +61,7 @@ export class ProductContextService {
     message: string,
     history: ConversationMessage[],
     limit: number,
+    preferredProductIds: number[] = [],
   ): Promise<ProductContextResult> {
     const currentTerms = extractProductSearchTerms(message);
     const historyTerms = history
@@ -68,6 +70,10 @@ export class ProductContextService {
       .flatMap((item) => extractProductSearchTerms(item.content));
     const searchTerms = [...new Set([...currentTerms, ...historyTerms])].slice(0, 10);
     const found = new Map<number, CatalogSearchProduct>();
+    const preferred = await this.catalog.getProductsWithAvailability(
+      preferredProductIds.slice(0, limit),
+    );
+    for (const item of preferred) found.set(item.product.id, item.product);
 
     for (const term of searchTerms) {
       const remaining = limit - found.size;
@@ -79,13 +85,13 @@ export class ProductContextService {
       }
     }
 
-    const products = await Promise.all(
-      [...found.values()].map(async (product) => ({
-        product,
-        availability: await this.catalog.getProductAvailability(product.id),
-      })),
-    );
+    const products = await this.catalog.getProductsWithAvailability([...found.keys()]);
 
-    return { products, searchPerformed: searchTerms.length > 0, searchTerms };
+    return {
+      products,
+      searchPerformed: preferredProductIds.length > 0 || searchTerms.length > 0,
+      searchTerms,
+      currentSearchTerms: currentTerms,
+    };
   }
 }

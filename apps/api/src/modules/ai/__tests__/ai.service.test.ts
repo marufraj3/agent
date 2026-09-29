@@ -94,6 +94,13 @@ class FakeCatalog {
     if (id === preOrderProduct.id) return availabilityFor(preOrderProduct);
     return null;
   }
+
+  async getProductsWithAvailability(ids: number[]) {
+    return ids.flatMap((id) => {
+      const item = id === product.id ? product : id === preOrderProduct.id ? preOrderProduct : null;
+      return item ? [{ product: item, availability: availabilityFor(item) }] : [];
+    });
+  }
 }
 
 class MemoryEventLogger implements AIEventLogger {
@@ -206,6 +213,16 @@ test('conversation context resolves a follow-up size question to the prior produ
   );
   assert.deepEqual(result.productIds, [6024]);
   assert.match(result.reply, /XL: 16 in stock/);
+});
+
+test('ambiguous reference to multiple remembered products asks for clarification', async () => {
+  const { service } = createService();
+  const result = await service.respond(
+    aiInputSchema.parse({ message: 'একটা দেন', contextProductIds: [6024, 7000] }),
+  );
+  assert.equal(result.action, 'clarify_product');
+  assert.deepEqual(result.productIds, []);
+  assert.match(result.reply, /কোন প্রোডাক্ট/);
 });
 
 test('invalid model JSON is retried once and then validated', async () => {

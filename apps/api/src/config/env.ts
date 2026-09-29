@@ -39,6 +39,7 @@ const envSchema = z.object({
   AI_MAX_HISTORY_MESSAGES: z.coerce.number().int().min(0).max(20).default(8),
   AI_MAX_PRODUCTS: z.coerce.number().int().min(1).max(10).default(5),
   AI_TEST_RATE_LIMIT_PER_MINUTE: z.coerce.number().int().min(1).max(300).default(30),
+  CONVERSATION_HISTORY_LIMIT: z.coerce.number().int().min(1).max(100).default(20),
   WEBSITE_API_BASE_URL: z.url().default('https://sells.alzeena.com.bd/public/api'),
   PRODUCT_FEED_TIMEOUT_MS: z.coerce.number().int().min(1_000).max(120_000).default(30_000),
   PRODUCT_FEED_RETRIES: z.coerce.number().int().min(0).max(5).default(3),

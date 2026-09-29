@@ -1,4 +1,4 @@
-import type { PrismaClient } from '@alzeena/database';
+import type { Prisma, PrismaClient } from '@alzeena/database';
 
 export function isKnownActiveProductStatus(status: string): boolean {
   // The observed feed uses "1" for active. Unknown source values fail closed rather
@@ -48,6 +48,11 @@ export interface CatalogSearchProduct {
 
 export type AvailabilityType = 'in_stock' | 'pre_order' | 'unavailable';
 
+export interface CatalogProductWithAvailability {
+  product: CatalogSearchProduct;
+  availability: ProductAvailability;
+}
+
 export interface ProductAvailability {
   id: number;
   productName: string;
@@ -65,6 +70,70 @@ export interface ProductAvailability {
     orderable: boolean;
     availabilityType: AvailabilityType;
   }>;
+}
+
+type ProductWithVariations = Prisma.ProductGetPayload<{ include: { variations: true } }>;
+
+function toCatalogProduct(product: ProductWithVariations): CatalogSearchProduct {
+  return {
+    id: product.websiteProductId,
+    internalId: product.id,
+    productName: product.productName,
+    productCode: product.productCode,
+    slug: product.slug,
+    productStatus: product.productStatus,
+    active: isKnownActiveProductStatus(product.productStatus),
+    sellPrice: product.sellPrice.toFixed(2),
+    discountPrice: product.discountPrice?.toFixed(2) ?? null,
+    flashSellPrice: product.flashSellPrice?.toFixed(2) ?? null,
+    isPreOrder: product.isPreOrder,
+    image: product.productImage,
+    color: product.colorName,
+    category: product.categoryName,
+    subCategory: product.subCategoryName,
+    variations: product.variations.map((variation) => ({
+      websiteVariationId: variation.websiteVariationId,
+      websiteSizeId: variation.websiteSizeId,
+      sizeName: variation.sizeName,
+      stockQuantity: variation.stockQuantity,
+      active: variation.active,
+    })),
+  };
+}
+
+function toAvailability(product: ProductWithVariations): ProductAvailability {
+  const productActive = product.presentInFeed && isKnownActiveProductStatus(product.productStatus);
+  return {
+    id: product.websiteProductId,
+    productName: product.productName,
+    productCode: product.productCode,
+    productStatus: product.productStatus,
+    active: productActive,
+    presentInFeed: product.presentInFeed,
+    isPreOrder: product.isPreOrder,
+    sizes: product.variations.map((variation) => {
+      const orderable = isVariationOrderable({
+        stockQuantity: variation.stockQuantity,
+        variationActive: variation.active,
+        productActive,
+        isPreOrder: product.isPreOrder,
+      });
+      const availabilityType: AvailabilityType = !orderable
+        ? 'unavailable'
+        : variation.stockQuantity > 0
+          ? 'in_stock'
+          : 'pre_order';
+      return {
+        websiteVariationId: variation.websiteVariationId,
+        websiteSizeId: variation.websiteSizeId,
+        sizeName: variation.sizeName,
+        stock: variation.stockQuantity,
+        active: variation.active,
+        orderable,
+        availabilityType,
+      };
+    }),
+  };
 }
 
 export class ProductCatalogService {
@@ -91,30 +160,36 @@ export class ProductCatalogService {
       take: limit,
     });
 
-    return products.map((product) => ({
-      id: product.websiteProductId,
-      internalId: product.id,
-      productName: product.productName,
-      productCode: product.productCode,
-      slug: product.slug,
-      productStatus: product.productStatus,
-      active: isKnownActiveProductStatus(product.productStatus),
-      sellPrice: product.sellPrice.toFixed(2),
-      discountPrice: product.discountPrice?.toFixed(2) ?? null,
-      flashSellPrice: product.flashSellPrice?.toFixed(2) ?? null,
-      isPreOrder: product.isPreOrder,
-      image: product.productImage,
-      color: product.colorName,
-      category: product.categoryName,
-      subCategory: product.subCategoryName,
-      variations: product.variations.map((variation) => ({
-        websiteVariationId: variation.websiteVariationId,
-        websiteSizeId: variation.websiteSizeId,
-        sizeName: variation.sizeName,
-        stockQuantity: variation.stockQuantity,
-        active: variation.active,
-      })),
-    }));
+    return products.map(toCatalogProduct);
+  }
+
+  async getProductByWebsiteId(websiteProductId: number): Promise<CatalogSearchProduct | null> {
+    const product = await this.prisma.product.findUnique({
+      where: { websiteProductId },
+      include: {
+        variations: { orderBy: [{ active: 'desc' }, { websiteSizeId: 'asc' }] },
+      },
+    });
+    if (!product || !product.presentInFeed) return null;
+    return toCatalogProduct(product);
+  }
+
+  async getProductsWithAvailability(
+    websiteProductIds: number[],
+  ): Promise<CatalogProductWithAvailability[]> {
+    const ids = [...new Set(websiteProductIds)].slice(0, 20);
+    if (ids.length === 0) return [];
+    const products = await this.prisma.product.findMany({
+      where: { websiteProductId: { in: ids }, presentInFeed: true },
+      include: { variations: { orderBy: { websiteSizeId: 'asc' } } },
+    });
+    const byId = new Map(products.map((product) => [product.websiteProductId, product]));
+    return ids.flatMap((id) => {
+      const product = byId.get(id);
+      return product
+        ? [{ product: toCatalogProduct(product), availability: toAvailability(product) }]
+        : [];
+    });
   }
 
   async getProductAvailability(websiteProductId: number): Promise<ProductAvailability | null> {
@@ -124,39 +199,6 @@ export class ProductCatalogService {
     });
 
     if (!product) return null;
-
-    const productActive = product.presentInFeed && isKnownActiveProductStatus(product.productStatus);
-    return {
-      id: product.websiteProductId,
-      productName: product.productName,
-      productCode: product.productCode,
-      productStatus: product.productStatus,
-      active: productActive,
-      presentInFeed: product.presentInFeed,
-      isPreOrder: product.isPreOrder,
-      sizes: product.variations.map((variation) => {
-        const orderable = isVariationOrderable({
-          stockQuantity: variation.stockQuantity,
-          variationActive: variation.active,
-          productActive,
-          isPreOrder: product.isPreOrder,
-        });
-        const availabilityType: AvailabilityType = !orderable
-          ? 'unavailable'
-          : variation.stockQuantity > 0
-            ? 'in_stock'
-            : 'pre_order';
-
-        return {
-          websiteVariationId: variation.websiteVariationId,
-          websiteSizeId: variation.websiteSizeId,
-          sizeName: variation.sizeName,
-          stock: variation.stockQuantity,
-          active: variation.active,
-          orderable,
-          availabilityType,
-        };
-      }),
-    };
+    return toAvailability(product);
   }
 }

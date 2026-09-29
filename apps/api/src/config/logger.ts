@@ -15,6 +15,7 @@ export const loggerOptions: FastifyServerOptions['logger'] = {
     paths: [
       'req.headers.authorization',
       'req.headers.cookie',
+      'req.headers["x-admin-password"]',
       'res.headers["set-cookie"]',
     ],
     censor: '[REDACTED]',

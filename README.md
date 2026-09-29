@@ -1,8 +1,8 @@
 # Alzeena Fashion Sales Agent
 
-Production-oriented foundation for the future Alzeena Fashion AI sales agent. The repository currently contains **Steps 1–5**: the web application, API, infrastructure configuration, PostgreSQL/Prisma data layer, product-feed synchronization, protected Knowledge Base/business settings management, and the modular Gemini-backed AI core.
+Production-oriented foundation for the future Alzeena Fashion AI sales agent. The repository currently contains **Steps 1–6**: the web application, API, infrastructure configuration, PostgreSQL/Prisma data layer, product-feed synchronization, protected Knowledge Base/business settings management, the modular Gemini-backed AI core, and persistent customer/conversation memory.
 
-Step 5 adds intent routing, cost-controlled rule responses, local product context, prompt construction, structured Gemini output, safe fallback behavior, and a protected test API. It does not add Facebook, orders, image/voice processing, customer persistence, or a human-handover workflow.
+Step 6 adds channel-neutral customer identities, bounded conversation history, product-reference memory, a persistent protected chat flow, and basic customer/conversation administration. It does not add Facebook/Meta transport, orders, image/voice processing, a human inbox, analytics, or marketing automation.
 
 ## Architecture
 
@@ -24,7 +24,7 @@ Step 5 adds intent routing, cost-controlled rule responses, local product contex
 └── tsconfig.base.json          # Shared TypeScript rules
 ```
 
-Future channels and capabilities (Facebook Messenger, orders, image/voice processing, persistent conversations, and human handover) should be introduced as isolated modules. The AI provider, orchestration, prompt construction, local product context, and admin-managed instructions remain separate so providers and channels can change independently.
+Future channels and capabilities (Facebook Messenger transport, orders, image/voice processing, and a human inbox) should be introduced as isolated modules. The AI provider, orchestration, prompt construction, local product context, persistent memory, and admin-managed instructions remain separate so providers and channels can change independently.
 
 ## Step 2 database models
 
@@ -160,9 +160,50 @@ curl -X POST http://localhost:4000/api/ai/test \
   }'
 ```
 
-Conversation history is caller-provided only and capped before prompting; Step 5 creates no conversation/customer tables. Product searches call PostgreSQL, never the external product feed. Model output is schema-validated, safely extracted from JSON/code fences when practical, and retried once after malformed output. Provider/configuration failures return a short human-assistance fallback instead of crashing.
+The legacy Step 5 test endpoint accepts caller-provided history capped before prompting. The Step 6 persistent endpoint described below retrieves its own bounded history. Product searches call PostgreSQL, never the external product feed. Model output is schema-validated, safely extracted from JSON/code fences when practical, and retried once after malformed output. Provider/configuration failures return a short human-assistance fallback instead of crashing.
 
 AI logs contain intent, provider/model, latency, search flag, product count, handover flag and message length. They do not contain API keys, passwords, tokens, or raw customer messages.
+
+## Step 6 customer and conversation memory
+
+`Customer`, `Conversation`, and `Message` records preserve channel-neutral identities and bounded recent context. A `(platform, platformUserId)` identity maps to one customer. Customers may have many historical conversations, while a partial PostgreSQL index permits only one `active` conversation for each customer/channel. Closed and human-handover conversations are never reused as active.
+
+The persistent flow is:
+
+```text
+platform identity → find/create customer → reuse/create active conversation
+                                      → save user message → bounded memory context
+                                      → existing AIService → save assistant message
+```
+
+Assistant message metadata records referenced website product IDs. They are hints only: every follow-up reloads current price, stock, sizes, pre-order state, and availability from local PostgreSQL. Multiple possible references produce a short clarification instead of a guess. `CONVERSATION_HISTORY_LIMIT` controls recent messages loaded per turn and defaults to 20.
+
+Protected endpoints:
+
+```text
+POST /api/ai/chat
+GET  /api/admin/customers
+GET  /api/admin/customers/:id
+GET  /api/admin/conversations
+GET  /api/admin/conversations/:id
+```
+
+Example persistent request:
+
+```bash
+curl -X POST http://localhost:4000/api/ai/chat \
+  -H "content-type: application/json" \
+  -H "x-admin-password: $ADMIN_PASSWORD" \
+  --data '{
+    "customer": {"platform":"test","platformUserId":"user-001","name":"Rahim"},
+    "channel": "test",
+    "message": "Messi polo কত?"
+  }'
+```
+
+Send the same identity again to reuse its active conversation, or set `"newConversation": true` to close the active conversation and start another. A supplied `conversationId` is accepted only when it is active and belongs to the resolved customer.
+
+Admin pages are available at `/admin/ai-test`, `/admin/customers`, and `/admin/conversations`. The AI test page shows the conversation ID, history, intent, confidence, and handover state, and can explicitly begin a new conversation.
 
 ## Prerequisites
 
@@ -306,6 +347,7 @@ Run the compiled backend with `npm run start --workspace=@alzeena/api`. Run the 
 | `AI_MAX_HISTORY_MESSAGES` | Recent caller-provided messages sent to the model | Used |
 | `AI_MAX_PRODUCTS` | Maximum relevant local products in model context | Used |
 | `AI_TEST_RATE_LIMIT_PER_MINUTE` | Per-process test endpoint limit | Used |
+| `CONVERSATION_HISTORY_LIMIT` | Maximum recent persisted messages loaded into memory | Used |
 | `META_PAGE_ACCESS_TOKEN` | Future Meta integration | Reserved |
 | `META_APP_SECRET` | Future Meta integration | Reserved |
 | `META_VERIFY_TOKEN` | Future webhook verification | Reserved |

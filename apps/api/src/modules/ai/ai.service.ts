@@ -53,6 +53,20 @@ function productReferences(context: ProductContextResult) {
   }));
 }
 
+function isAmbiguousReference(message: string, context: ProductContextResult): boolean {
+  return (
+    context.products.length > 1 &&
+    context.currentSearchTerms.length === 0 &&
+    /(?:এটা|ওটা|এইটা|ওইটা|আগেরটা|একটা|this one|that one|the previous one|\b(?:xs|s|m|l|xl|xxl|xxxl)\s*size\b|size\s*(?:আছে|ache|ase)|দাম|price|stock|available)/iu.test(message)
+  );
+}
+
+function clarificationReply(language: DetectedLanguage): string {
+  if (language === 'bn') return 'কোন প্রোডাক্টটি বোঝাচ্ছেন? নাম বা কোডটি বলবেন?';
+  if (language === 'banglish') return 'Kon product-ta bolchen? Name ba code-ta diben?';
+  return 'Which product do you mean? Please share its name or code.';
+}
+
 export class AIService {
   constructor(private readonly dependencies: AIServiceDependencies) {}
 
@@ -64,21 +78,38 @@ export class AIService {
       products: [],
       searchPerformed: false,
       searchTerms: [],
+      currentSearchTerms: [],
     };
 
     try {
       const [knowledgeBase, settings, products] = await Promise.all([
         this.dependencies.knowledgeBase.getActiveKnowledgeBase(),
         this.dependencies.settings.getBusinessSettings(),
-        decision.needsProductSearch
+        decision.needsProductSearch || input.contextProductIds.length > 0
           ? this.dependencies.productContext.findRelevantProducts(
               input.message,
               history,
               this.dependencies.config.maxProducts,
+              input.contextProductIds,
             )
           : Promise.resolve(productContext),
       ]);
       productContext = products;
+
+      if (isAmbiguousReference(input.message, products)) {
+        const response: AIResponse = {
+          reply: clarificationReply(decision.language),
+          intent: decision.intent,
+          confidence: 0.98,
+          requiresHuman: false,
+          action: 'clarify_product',
+          productIds: [],
+          products: productReferences(products),
+          source: 'rules',
+        };
+        await this.logSuccess(response, input, productContext, startedAt, 'rules', 'rules');
+        return response;
+      }
 
       const ruleResponse = this.dependencies.ruleResponses.create(
         decision,
@@ -106,6 +137,7 @@ export class AIService {
         knowledgeBase,
         settings,
         products: products.products,
+        customer: input.customerContext,
         history,
         customerMessage: input.message,
         detectedLanguage: decision.language,

@@ -31,6 +31,14 @@ export const aiInputSchema = z
     customerId: z.string().trim().max(100).nullable().optional(),
     language: z.enum(['auto', 'bn', 'banglish', 'en']).default('auto'),
     conversationHistory: z.array(conversationMessageSchema).max(50).default([]),
+    contextProductIds: z.array(z.number().int().positive()).max(10).default([]),
+    customerContext: z
+      .object({
+        name: z.string().trim().max(255).nullable().optional(),
+        language: z.string().trim().max(20).nullable().optional(),
+      })
+      .strict()
+      .optional(),
   })
   .strict();
 
