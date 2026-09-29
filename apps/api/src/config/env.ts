@@ -14,6 +14,11 @@ if (envFile) {
   loadDotEnv({ path: envFile, quiet: true });
 }
 
+const booleanFromEnv = z.preprocess(
+  (value) => typeof value === 'string' ? value.toLowerCase() === 'true' : value,
+  z.boolean(),
+);
+
 const envSchema = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
   API_HOST: z.string().default('0.0.0.0'),
@@ -97,6 +102,12 @@ const envSchema = z.object({
   PRODUCT_SYNC_WORKER_CONCURRENCY: z.coerce.number().int().min(1).max(10).default(1),
   FOLLOWUP_WORKER_CONCURRENCY: z.coerce.number().int().min(1).max(20).default(2),
   PRODUCT_CACHE_TTL_SECONDS: z.coerce.number().int().min(5).max(3600).default(60),
+  RECOMMENDATION_ENABLED: booleanFromEnv.default(true),
+  RECOMMENDATION_MAX_PRODUCTS: z.coerce.number().int().min(1).max(3).default(3),
+  RECOMMENDATION_CROSS_SELL_ENABLED: booleanFromEnv.default(true),
+  RECOMMENDATION_UPSELL_ENABLED: booleanFromEnv.default(true),
+  RECOMMENDATION_CACHE_TTL_SECONDS: z.coerce.number().int().min(5).max(900).default(60),
+  SALES_INTELLIGENCE_CACHE_TTL_SECONDS: z.coerce.number().int().min(5).max(900).default(60),
   MESSENGER_TECHNICAL_LOG_RETENTION_DAYS: z.coerce.number().int().min(1).max(365).default(30),
   MESSENGER_WEBHOOK_RATE_LIMIT_PER_MINUTE: z.coerce.number().int().min(10).max(10_000).default(1_000),
   WEBSITE_API_BASE_URL: z.url().default('https://sells.alzeena.com.bd/public/api'),

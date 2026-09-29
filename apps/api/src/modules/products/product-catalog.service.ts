@@ -1,4 +1,5 @@
 import type { Prisma, PrismaClient } from '@alzeena/database';
+import { resolveEffectivePrice } from './effective-price.js';
 
 export function isKnownActiveProductStatus(status: string): boolean {
   // The observed feed uses "1" for active. Unknown source values fail closed rather
@@ -143,6 +144,7 @@ export interface ProductRecommendationFilters {
   color?: string | null;
   category?: string | null;
   subCategory?: string | null;
+  size?: string | null;
   minPrice?: number | null;
   maxPrice?: number | null;
   includePreOrder?: boolean;
@@ -184,21 +186,28 @@ export class ProductCatalogService {
     const query = filters.query?.trim().slice(0, 100);
     const products = await this.prisma.product.findMany({
       where: {
-        presentInFeed: true,
-        ...(filters.color ? { colorName: { contains: filters.color, mode: 'insensitive' } } : {}),
-        ...(filters.category ? { categoryName: { contains: filters.category, mode: 'insensitive' } } : {}),
-        ...(filters.subCategory ? { subCategoryName: { contains: filters.subCategory, mode: 'insensitive' } } : {}),
-        ...(filters.includePreOrder === false ? { isPreOrder: false } : {}),
-        ...(query ? { OR: [
-          { productName: { contains: query, mode: 'insensitive' } }, { productCode: { contains: query, mode: 'insensitive' } },
-          { categoryName: { contains: query, mode: 'insensitive' } }, { subCategoryName: { contains: query, mode: 'insensitive' } },
-        ] } : {}),
+        AND: [
+          { presentInFeed: true },
+          { productStatus: '1' },
+          ...(filters.color ? [{ colorName: { contains: filters.color, mode: 'insensitive' as const } }] : []),
+          ...(filters.category ? [{ categoryName: { contains: filters.category, mode: 'insensitive' as const } }] : []),
+          ...(filters.subCategory ? [{ subCategoryName: { contains: filters.subCategory, mode: 'insensitive' as const } }] : []),
+          ...(filters.includePreOrder === false ? [{ isPreOrder: false }] : []),
+          ...(query ? [{ OR: [
+            { productName: { contains: query, mode: 'insensitive' as const } }, { productCode: { contains: query, mode: 'insensitive' as const } },
+            { categoryName: { contains: query, mode: 'insensitive' as const } }, { subCategoryName: { contains: query, mode: 'insensitive' as const } },
+          ] }] : []),
+          filters.size ? { OR: [
+            { isPreOrder: true, variations: { some: { active: true, sizeName: { equals: filters.size, mode: 'insensitive' as const } } } },
+            { variations: { some: { active: true, stockQuantity: { gt: 0 }, sizeName: { equals: filters.size, mode: 'insensitive' as const } } } },
+          ] } : { OR: [{ isPreOrder: true }, { variations: { some: { active: true, stockQuantity: { gt: 0 } } } }] },
+        ],
       },
       include: { variations: { orderBy: [{ active: 'desc' }, { stockQuantity: 'desc' }] } },
       orderBy: [{ updatedAt: 'desc' }],
       take: Math.min(limit * 4, 20),
     });
-    const effectivePrice = (product: CatalogSearchProduct) => Number(product.flashSellPrice) > 0 ? Number(product.flashSellPrice) : Number(product.discountPrice) > 0 ? Number(product.discountPrice) : Number(product.sellPrice);
+    const effectivePrice = (product: CatalogSearchProduct) => Number(resolveEffectivePrice(product));
     const catalogProducts: CatalogSearchProduct[] = products.map(toCatalogProduct).filter((product: CatalogSearchProduct) =>
       (filters.minPrice == null || effectivePrice(product) >= filters.minPrice) &&
       (filters.maxPrice == null || effectivePrice(product) <= filters.maxPrice),

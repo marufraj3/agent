@@ -2,12 +2,14 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
+import { clearAdminSession } from '../_lib/admin-client';
 
 const navigation = [
   { label: "Dashboard", href: "/admin" },
   { label: "Inbox", href: "/admin/inbox" },
   { label: "Customers", href: "/admin/customers" },
   { label: "Orders", href: "/admin/orders" },
+  { label: "Sales Intelligence", href: "/admin/sales-intelligence" },
   { label: "Automation", href: "/admin/automation/followups" },
   { label: "Products", href: "/admin/products" },
   { label: "Knowledge Base", href: "/admin/knowledge-base" },
@@ -18,8 +20,8 @@ const navigation = [
 export function AdminShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
-  function logout() {
-    sessionStorage.removeItem("alzeena-admin-password");
+  async function logout() {
+    await clearAdminSession();
     router.push("/admin");
     router.refresh();
   }

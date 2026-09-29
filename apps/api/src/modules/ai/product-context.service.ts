@@ -43,7 +43,7 @@ export class ProductContextService {
     if (!recommendationRequested) for (const term of currentTerms) add(await this.catalog.searchProducts(term, limit - found.size || 1));
 
     if (recommendationRequested && found.size < limit) {
-      add(await this.catalog.recommendProducts({ query: currentTerms.at(-1) ?? null, color: entities.color, minPrice: entities.minPrice, maxPrice: entities.maxPrice }, Math.min(limit, 5)));
+      add(await this.catalog.recommendProducts({ query: currentTerms.at(-1) ?? null, color: entities.color, size: entities.size, minPrice: entities.minPrice, maxPrice: entities.maxPrice }, Math.min(limit, 5)));
     }
 
     const preferred = await this.catalog.getProductsWithAvailability(preferredProductIds.slice(0, limit));
@@ -54,7 +54,10 @@ export class ProductContextService {
       add(await this.catalog.searchProducts(term, limit - found.size));
     }
 
-    const withAvailability = await this.catalog.getProductsWithAvailability([...found.keys()]);
+    const resolvedAvailability = await this.catalog.getProductsWithAvailability([...found.keys()]);
+    const withAvailability = entities.size
+      ? resolvedAvailability.filter((item) => item.availability.sizes.some((size) => size.sizeName.toUpperCase() === entities.size && size.orderable))
+      : resolvedAvailability.filter((item) => item.availability.sizes.some((size) => size.orderable));
     const term = currentTerms[0]?.toLowerCase();
     const ranked = currentTerms.length === 0 ? withAvailability : [...withAvailability].sort((a, b) => {
       const score = (item: AIProductContext) => {

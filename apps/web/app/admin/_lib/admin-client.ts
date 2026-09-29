@@ -71,6 +71,13 @@ export async function adminRequest<T>(
   return payload as T;
 }
 
+export async function clearAdminSession(): Promise<void> {
+  sessionReady = false;
+  sessionStorage.removeItem(SESSION_STORAGE_KEY);
+  await fetch('/backend-api/admin/session', { method: 'DELETE', credentials: 'same-origin' }).catch(() => undefined);
+  window.dispatchEvent(new Event('admin-session-cleared'));
+}
+
 export function useAdminPassword() {
   const [password, setPasswordState] = useState('');
   const [hydrated, setHydrated] = useState(false);
@@ -81,20 +88,18 @@ export function useAdminPassword() {
     setPasswordState(active ? SESSION_MARKER : '');
     setHydrated(true);
     const ready = () => setPasswordState(SESSION_MARKER);
+    const cleared = () => setPasswordState('');
     window.addEventListener('admin-session-ready', ready);
-    return () => window.removeEventListener('admin-session-ready', ready);
+    window.addEventListener('admin-session-cleared', cleared);
+    return () => {
+      window.removeEventListener('admin-session-ready', ready);
+      window.removeEventListener('admin-session-cleared', cleared);
+    };
   }, []);
 
   function setPassword(value: string) {
     setPasswordState(value);
-    if (!value) {
-      sessionReady = false;
-      sessionStorage.removeItem(SESSION_STORAGE_KEY);
-      void fetch('/backend-api/admin/session', {
-        method: 'DELETE',
-        credentials: 'same-origin',
-      });
-    }
+    if (!value) void clearAdminSession();
   }
 
   return { password, setPassword, hydrated };

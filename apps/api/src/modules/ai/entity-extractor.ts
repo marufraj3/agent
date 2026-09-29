@@ -38,10 +38,17 @@ export function extractEntities(message: string): ExtractedEntities {
   let quantity = explicitQuantity ? Number(explicitQuantity) : null;
   if (!quantity) for (const [word, value] of Object.entries(numberWords)) if (new RegExp(`(^|\\s)${word}(?:\\s*(?:ta|টা|টি|pcs?|pieces?|জোড়া))?(\\s|$)`, 'iu').test(normalized)) { quantity = value; break; }
   const range = normalized.match(/(?<!\d)(?:৳|tk|taka)?\s*([1-9]\d{1,5})\s*(?:-|to|থেকে)\s*(?:৳|tk|taka)?\s*([1-9]\d{1,5})(?!\d)/i);
-  const maxOnly = normalized.match(/(?:৳|tk|taka)?\s*(\d+(?:\.\d+)?)\s*(k)?\s*(?:er moddhe|max|budget|এর মধ্যে)/i)
+  const maxOnly = normalized.match(/(?:৳|tk|taka)?\s*(\d+(?:\.\d+)?)\s*(k)?\s*(?:er moddhe|takar moddhe|max|budget|এর মধ্যে|টাকার মধ্যে)/i)
     ?? normalized.match(/(?:under|within|budget|সর্বোচ্চ|মধ্যে)\s*(?:৳|tk|taka)?\s*(\d+(?:\.\d+)?)\s*(k)?/i);
+  const around = normalized.match(/(?:around|about|প্রায়|কাছাকাছি)\s*(?:৳|tk|taka)?\s*(\d+(?:\.\d+)?)\s*(k)?/i)
+    ?? normalized.match(/(?:৳|tk|taka)?\s*(\d+(?:\.\d+)?)\s*(k)?\s*(?:around|এর কাছাকাছি)/i);
   let minPrice = range ? Number(range[1]) : null; let maxPrice = range ? Number(range[2]) : null;
   if (!maxPrice && maxOnly) maxPrice = Number(maxOnly[1]) * (maxOnly[2] ? 1_000 : 1);
+  if (!maxPrice && around) {
+    const target = Number(around[1]) * (around[2] ? 1_000 : 1);
+    minPrice = Math.max(0, Math.floor(target * 0.9));
+    maxPrice = Math.ceil(target * 1.1);
+  }
   const phone = original.replace(/[\s-]/g, '').match(/(?:\+?880|0)?1[3-9]\d{8}/)?.[0] ?? null;
   const customerName = original.match(/(?:name|naam|নাম)\s*[:\-]?\s*([^,\n;]{2,80})/i)?.[1]?.trim() ?? null;
   const address = original.match(/(?:address|ঠিকানা)\s*[:\-]?\s*(.+?)(?=\s*;|\s*[,\n]\s*(?:phone|mobile|ফোন|name|নাম|location|লোকেশন)\s*[:\-]|$)/i)?.[1]?.trim() ?? null;

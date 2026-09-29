@@ -2,6 +2,7 @@ import type { PrismaClient } from '@alzeena/database';
 import type { AIService } from '../ai/ai.service.js';
 import type { AIResponse } from '../ai/ai.types.js';
 import { extractEntities } from '../ai/entity-extractor.js';
+import { detectLanguage, type DetectedLanguage } from '../ai/ai-router.js';
 import { transcriptionSchema, type AudioInput, type Transcription } from '../audio/audio.types.js';
 import type { VoiceUnderstandingService } from '../audio/voice-understanding.service.js';
 import type { ImageProductResult, ImageProductService } from '../images/image-product.service.js';
@@ -13,6 +14,12 @@ import { parseFollowUpTime } from '../automation/follow-up-time.js';
 import type { HandoverReasonName } from '../handovers/handover.types.js';
 import type { OrderConversationService } from '../orders/order-conversation.service.js';
 import { ProductCatalogService } from '../products/product-catalog.service.js';
+import { resolveEffectivePrice } from '../products/effective-price.js';
+import { RecommendationService, type RecommendedProduct } from '../recommendations/recommendation.service.js';
+import { RecommendationSettingsService, defaultRecommendationControls } from '../recommendations/recommendation-settings.service.js';
+import { CustomerPreferenceService } from '../sales-intelligence/customer-preference.service.js';
+import { SalesEventService } from '../sales-intelligence/sales-event.service.js';
+import { ShoppingIntentService, type ShoppingIntent } from '../sales-intelligence/shopping-intent.service.js';
 import type { ConversationChannelName } from './conversation.types.js';
 import { ConversationContextService } from './conversation-context.service.js';
 import { ConversationService } from './conversation.service.js';
@@ -104,11 +111,72 @@ function imageClarificationResponse(result: ImageProductResult): AIResponse {
   };
 }
 
+function recommendationResponse(products: RecommendedProduct[], language: DetectedLanguage): AIResponse {
+  if (products.length === 0) {
+    const reply = language === 'en'
+      ? 'I could not find a verified available product matching those filters. Would you like to change the budget, color, or size?'
+      : language === 'banglish'
+        ? 'Ei filter-e verified available product paini. Budget, color, ba size change korte chan?'
+        : 'আপনার চাওয়া category, budget এবং availability অনুযায়ী এখন কোনো verified product পাওয়া যায়নি। Budget, color বা size একটু পরিবর্তন করতে চান?';
+    return {
+      reply,
+      intent: 'product_search', confidence: 1, language, entities: extractEntities(''),
+      requiresHuman: false, action: 'clarify', productIds: [], products: [], source: 'rules',
+    };
+  }
+  const lines = products.map((product, index) => {
+    const size = product.requestedSize
+      ? `, ${product.requestedSize.sizeName}: ${product.requestedSize.availability === 'pre_order' ? 'pre-order' : 'available'}`
+      : '';
+    const upsell = product.reasons.includes('slightly_above_budget')
+      ? language === 'en' ? ' — optional slightly higher budget' : language === 'banglish' ? ' — optional ektu beshi budget' : ' — একটু বেশি বাজেটের option'
+      : '';
+    return `${index + 1}) ${product.productName} (${product.productCode}) — ৳${product.currentPrice}${size}${upsell}`;
+  });
+  const reply = language === 'en'
+    ? `Verified options matching your request:\n${lines.join('\n')}\nWhich one would you like to see?`
+    : language === 'banglish'
+      ? `Apnar request-er verified option:\n${lines.join('\n')}\nKon-ta dekhte chan?`
+      : `আপনার request অনুযায়ী verified option:\n${lines.join('\n')}\nকোনটি দেখতে চান?`;
+  return {
+    reply,
+    intent: 'product_search', confidence: 1, language, entities: extractEntities(''),
+    requiresHuman: false, action: 'recommend', productIds: products.map((product) => product.productId),
+    products: products.map((product) => ({ id: product.productId, productName: product.productName, productCode: product.productCode, image: product.image })),
+    source: 'rules',
+  };
+}
+
+function comparisonResponse(products: Awaited<ReturnType<RecommendationService['compare']>>, language: DetectedLanguage): AIResponse {
+  if (products.length < 2) {
+    return {
+      reply: language === 'en' ? 'Please provide two or three valid product codes to compare.' : 'তুলনা করার জন্য ২–৩টি valid product code বলবেন?', intent: 'product_inquiry', confidence: 1,
+      language, entities: extractEntities(''), requiresHuman: false, action: 'clarify', productIds: [], products: [], source: 'rules',
+    };
+  }
+  const lines = products.map((product) => {
+    const sizes = product.availableSizes.map((item) => `${item.sizeName}${item.availability === 'pre_order' ? ' (pre-order)' : ''}`).join(', ') || 'none currently orderable';
+    return `${product.productCode}: ${product.productName}; price ৳${product.currentPrice}; color ${product.color ?? 'not listed'}; category ${product.category ?? 'not listed'}; sizes ${sizes}; details ${product.details ?? 'not listed'}`;
+  });
+  return {
+    reply: language === 'en'
+      ? `Factual comparison:\n${lines.join('\n')}\nTell me which attribute matters most and I can narrow the options.`
+      : `Factual comparison:\n${lines.join('\n')}\nকোন বৈশিষ্ট্যটি আপনার কাছে বেশি গুরুত্বপূর্ণ বললে সেই অনুযায়ী option narrow করতে পারি।`,
+    intent: 'product_inquiry', confidence: 1, language, entities: extractEntities(''), requiresHuman: false,
+    action: 'reply', productIds: products.map((product) => product.productId),
+    products: products.map((product) => ({ id: product.productId, productName: product.productName, productCode: product.productCode, image: product.image })), source: 'rules',
+  };
+}
+
 export class ChatService {
   private readonly customers: CustomerService;
   private readonly conversations: ConversationService;
   private readonly messages: MessageService;
   private readonly context: ConversationContextService;
+  private readonly shoppingIntents = new ShoppingIntentService();
+  private readonly recommendationSettings: RecommendationSettingsService;
+  private readonly preferences: CustomerPreferenceService;
+  private readonly salesEvents: SalesEventService;
 
   constructor(
     private readonly prisma: PrismaClient,
@@ -123,10 +191,14 @@ export class ChatService {
     private readonly lowConfidenceThreshold = 0.45,
     private readonly journey?: CustomerJourneyService,
     private readonly followUps?: FollowUpService,
+    recommendationDefaults = defaultRecommendationControls,
   ) {
     this.customers = new CustomerService(prisma);
     this.conversations = new ConversationService(prisma);
     this.messages = new MessageService(prisma);
+    this.recommendationSettings = new RecommendationSettingsService(prisma, recommendationDefaults);
+    this.preferences = new CustomerPreferenceService(prisma);
+    this.salesEvents = new SalesEventService(prisma);
     this.context = new ConversationContextService(
       prisma,
       historyLimit,
@@ -305,6 +377,8 @@ export class ChatService {
     let voiceProductIds: number[] = [];
     let customerMessage = initialContent;
     let response: AIResponse | undefined;
+    let shoppingIntent: ShoppingIntent | undefined;
+    let recommendedDetails: RecommendedProduct[] = [];
     if ((preparedAudio || transcription) && this.voice) {
       try {
         if (!transcription && preparedAudio) {
@@ -381,6 +455,22 @@ export class ChatService {
       });
       if (!memory) throw new Error('Conversation context could not be built');
 
+      const rememberedPreferences = memory.conversation.summary?.preferences;
+      const summaryPreferences = rememberedPreferences && typeof rememberedPreferences === 'object' && !Array.isArray(rememberedPreferences)
+        ? rememberedPreferences as Record<string, unknown>
+        : {};
+      shoppingIntent = this.shoppingIntents.detect(customerMessage, {
+        previousCategory: typeof (customer as any).preferredCategory === 'string'
+          ? (customer as any).preferredCategory
+          : memory.currentProducts[0]?.product.category ?? null,
+        previousColor: (typeof summaryPreferences.color === 'string' ? summaryPreferences.color : (customer as any).preferredColor) ?? null,
+        previousSize: (typeof summaryPreferences.size === 'string' ? summaryPreferences.size : (customer as any).preferredSize) as any,
+        previousMinPrice: typeof summaryPreferences.minPrice === 'number' ? summaryPreferences.minPrice : null,
+        previousMaxPrice: typeof summaryPreferences.maxPrice === 'number' ? summaryPreferences.maxPrice : null,
+        hasPreviousOrders: Boolean((customer as any).lastOrderAt),
+      });
+      await this.preferences.rememberExplicit(customer.id, customerMessage, shoppingIntent).catch(() => undefined);
+
       const contextProductIds = [
         ...new Set([...imageProductIds, ...voiceProductIds, ...memory.activeProductIds]),
       ].slice(0, this.maxProductIds);
@@ -404,6 +494,42 @@ export class ChatService {
       }) ?? undefined;
 
       if (response?.orderAction) response = { ...response, entities: extractEntities(customerMessage) };
+
+      if (!response && shoppingIntent.primary === 'product_comparison') {
+        const engine = await this.recommendationEngine();
+        const responseLanguage = detectLanguage(customerMessage, ['bn', 'banglish', 'en'].includes(customer.language ?? '') ? (customer.language as DetectedLanguage) : 'auto');
+        response = comparisonResponse(await engine.compareByCodes(shoppingIntent.comparisonCodes), responseLanguage);
+        response = { ...response, entities: extractEntities(customerMessage) };
+      }
+
+      if (!response && shoppingIntent.primary === 'product_search') {
+        const similar = /(?:এইরকম|এরকম|similar|like this|আর একটা|another)/iu.test(customerMessage);
+        const seed = memory.currentProducts[0]?.product ?? imageResult?.selectedProduct?.product;
+        const preferenceMemory = await this.preferences.getMemory(customer.id).catch(() => null);
+        const engine = await this.recommendationEngine();
+        recommendedDetails = await engine.recommend({
+          query: similar ? null : shoppingIntent.filters.query,
+          category: shoppingIntent.filters.category ?? seed?.category,
+          color: shoppingIntent.filters.color ?? (similar ? seed?.color : null),
+          size: shoppingIntent.filters.size,
+          minPrice: shoppingIntent.filters.minPrice,
+          maxPrice: shoppingIntent.filters.maxPrice ?? (
+            seed && /(?:cheaper|lower price|কম দাম|সস্তা)/iu.test(customerMessage)
+              ? Number(resolveEffectivePrice(seed))
+              : null
+          ),
+          contextProductIds,
+          preferredProductIds: [
+            ...(preferenceMemory?.viewedProductIds ?? []),
+            ...(preferenceMemory?.orderedProductIds ?? []),
+            ...(preferenceMemory?.discussedProductIds ?? []),
+          ],
+          excludeProductIds: similar && seed ? [seed.id] : [],
+          mode: similar ? 'similar' : 'recommendation',
+        });
+        const responseLanguage = detectLanguage(customerMessage, ['bn', 'banglish', 'en'].includes(customer.language ?? '') ? (customer.language as DetectedLanguage) : 'auto');
+        response = { ...recommendationResponse(recommendedDetails, responseLanguage), entities: extractEntities(customerMessage) };
+      }
 
       if (!response) {
         const language = ['bn', 'banglish', 'en'].includes(customer.language ?? '')
@@ -490,6 +616,27 @@ export class ChatService {
       },
     });
     await this.persistSalesState(conversation.id, response, (conversation as typeof conversation & { conversationSummary?: unknown }).conversationSummary);
+    if (shoppingIntent) {
+      try {
+        if (shoppingIntent.primary === 'product_search') {
+          await this.salesEvents.record({
+            customerId: customer.id, conversationId: conversation.id, type: 'PRODUCT_SEARCHED',
+            productId: recommendedDetails[0]?.internalProductId,
+            summary: 'Customer searched the local product catalog',
+            metadata: {
+              websiteProductId: recommendedDetails[0]?.productId,
+              productCode: recommendedDetails[0]?.productCode,
+              intent: shoppingIntent.primary, category: shoppingIntent.filters.category,
+              size: shoppingIntent.filters.size, color: shoppingIntent.filters.color,
+              minPrice: shoppingIntent.filters.minPrice, maxPrice: shoppingIntent.filters.maxPrice,
+            },
+          });
+        }
+        if (shoppingIntent.signals.includes('size_focused')) await this.salesEvents.record({ customerId: customer.id, conversationId: conversation.id, type: 'SIZE_CHECKED', summary: 'Customer checked size availability', metadata: { size: shoppingIntent.filters.size } });
+        if (shoppingIntent.signals.includes('price_sensitive') || response.intent === 'price_inquiry') await this.salesEvents.record({ customerId: customer.id, conversationId: conversation.id, type: 'PRICE_CHECKED', summary: 'Customer checked product pricing', metadata: { minPrice: shoppingIntent.filters.minPrice, maxPrice: shoppingIntent.filters.maxPrice } });
+        if (recommendedDetails.length) await this.salesEvents.recordRecommendations({ customerId: customer.id, conversationId: conversation.id, products: recommendedDetails, source: 'local_rules' });
+      } catch { /* Sales analytics must not interrupt customer messaging. */ }
+    }
     try {
       if (!response.requiresHuman) {
       if (response.orderAction?.type === 'confirm_order') {
@@ -507,8 +654,9 @@ export class ChatService {
         await this.journey?.transition(customer.id, 'AWAITING_CUSTOMER_INFO', response.orderAction.type === 'create_order' ? 'ORDER_DRAFT_CREATED' : 'CUSTOMER_INFO_PROVIDED', { summary: response.orderAction.type === 'create_order' ? 'Order draft created' : response.entities.size ? `Selected ${response.entities.size} size` : 'Order information updated', conversationId: conversation.id, orderId: response.orderAction.orderId });
       }
       else if (response.productIds.length) {
-        await this.journey?.record(customer.id, 'PRODUCT_VIEWED', { summary: `Asked about ${response.products[0]?.productCode ?? 'a product'}`, conversationId: conversation.id, metadata: { productIds: response.productIds } });
-        await this.journey?.transition(customer.id, 'PRODUCT_INTEREST', 'PRODUCT_INTEREST', { summary: `Interested in ${response.products[0]?.productCode ?? 'a product'}`, conversationId: conversation.id, metadata: { productIds: response.productIds } });
+        const viewedProduct = await (this.prisma as any).product.findUnique({ where: { websiteProductId: response.productIds[0] }, select: { id: true } });
+        await this.journey?.record(customer.id, 'PRODUCT_VIEWED', { summary: `Asked about ${response.products[0]?.productCode ?? 'a product'}`, conversationId: conversation.id, productId: viewedProduct?.id, metadata: { productIds: response.productIds } });
+        await this.journey?.transition(customer.id, 'PRODUCT_INTEREST', 'PRODUCT_INTEREST', { summary: `Interested in ${response.products[0]?.productCode ?? 'a product'}`, conversationId: conversation.id, productId: viewedProduct?.id, metadata: { productIds: response.productIds } });
       }
       }
     } catch { /* Automation state must not interrupt the customer response. */ }
@@ -543,6 +691,11 @@ export class ChatService {
       ...(imageResult ? { imageRecognition: imageResult } : {}),
       ...(transcription ? { transcription } : {}),
     };
+  }
+
+  private async recommendationEngine(): Promise<RecommendationService> {
+    const controls = await this.recommendationSettings.get().catch(() => defaultRecommendationControls);
+    return new RecommendationService(this.prisma, undefined, this.recommendationSettings.toEngineConfig(controls));
   }
 
   private async persistSalesState(conversationId: string, response: AIResponse, existing: unknown): Promise<void> {

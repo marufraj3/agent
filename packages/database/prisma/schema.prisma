@@ -71,6 +71,7 @@ model Product {
   variations        ProductVariation[]
   orderItems        OrderItem[]
   priceHistory      ProductPriceHistory[]
+  activities        CustomerActivity[]
 
   @@index([productCode])
   @@index([productName])
@@ -218,8 +219,13 @@ enum CustomerJourneyState {
 enum CustomerActivityType {
   MESSAGE_RECEIVED             @map("message_received")
   PRODUCT_VIEWED               @map("product_viewed")
+  PRODUCT_SEARCHED             @map("product_searched")
+  PRODUCT_RECOMMENDED          @map("product_recommended")
   PRODUCT_INTEREST             @map("product_interest")
   PRODUCT_SELECTED             @map("product_selected")
+  PRODUCT_ADDED                @map("product_added")
+  SIZE_CHECKED                 @map("size_checked")
+  PRICE_CHECKED                @map("price_checked")
   ORDER_STARTED                @map("order_started")
   CUSTOMER_INFO_PROVIDED       @map("customer_info_provided")
   ORDER_DRAFT_CREATED          @map("order_draft_created")
@@ -230,6 +236,7 @@ enum CustomerActivityType {
   ORDER_COMPLETED              @map("order_completed")
   HUMAN_HANDOVER               @map("human_handover")
   CONVERSATION_CLOSED          @map("conversation_closed")
+  ABANDONED_ORDER              @map("abandoned_order")
 }
 
 enum FollowUpType {
@@ -275,6 +282,10 @@ model Customer {
   preferredSize         String?               @map("preferred_size") @db.VarChar(50)
   preferredCategory     String?               @map("preferred_category") @db.VarChar(100)
   preferredColor        String?               @map("preferred_color") @db.VarChar(100)
+  preferredMinPrice     Decimal?              @map("preferred_min_price") @db.Decimal(12, 2)
+  preferredMaxPrice     Decimal?              @map("preferred_max_price") @db.Decimal(12, 2)
+  lastShoppingIntent    String?               @map("last_shopping_intent") @db.VarChar(50)
+  preferencesUpdatedAt DateTime?              @map("preferences_updated_at")
   lastActivityAt        DateTime               @default(now()) @map("last_activity_at")
   lastConversationAt    DateTime?              @map("last_conversation_at")
   lastOrderAt           DateTime?              @map("last_order_at")
@@ -301,6 +312,10 @@ model CustomerActivity {
   customerId     String               @map("customer_id") @db.Uuid
   conversationId String?              @map("conversation_id") @db.Uuid
   orderId        String?              @map("order_id") @db.Uuid
+  productId      String?              @map("product_id") @db.Uuid
+  requestedSize  String?              @map("requested_size") @db.VarChar(50)
+  minPrice       Decimal?             @map("min_price") @db.Decimal(12, 2)
+  maxPrice       Decimal?             @map("max_price") @db.Decimal(12, 2)
   type           CustomerActivityType
   summary        String               @db.VarChar(500)
   metadata       Json?                @db.JsonB
@@ -308,10 +323,14 @@ model CustomerActivity {
   customer       Customer             @relation(fields: [customerId], references: [id], onDelete: Cascade)
   conversation   Conversation?        @relation(fields: [conversationId], references: [id], onDelete: SetNull)
   order          Order?               @relation(fields: [orderId], references: [id], onDelete: SetNull)
+  product        Product?             @relation(fields: [productId], references: [id], onDelete: SetNull)
 
   @@index([customerId, createdAt])
   @@index([conversationId, createdAt])
   @@index([orderId, createdAt])
+  @@index([productId, type, createdAt])
+  @@index([type, createdAt])
+  @@index([requestedSize, createdAt])
   @@map("customer_activities")
 }
 

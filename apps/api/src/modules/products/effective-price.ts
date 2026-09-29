@@ -1,10 +1,9 @@
-import { Prisma } from '@alzeena/database';
-
-export type PriceValue = string | Prisma.Decimal;
+export type PriceValue = string | { toString(): string };
 
 function isPositive(value: PriceValue | null): value is PriceValue {
   if (value === null) return false;
-  return new Prisma.Decimal(value).greaterThan(0);
+  const normalized = value.toString().trim();
+  return /^\d+(?:\.\d+)?$/.test(normalized) && Number(normalized) > 0;
 }
 
 /** The single pricing rule used by customer responses and persisted orders. */

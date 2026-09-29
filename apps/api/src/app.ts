@@ -19,6 +19,8 @@ import { inboxRoutes } from './modules/inbox/routes/inbox.routes.js';
 import { orderAdminRoutes } from './modules/orders/routes/order-admin.routes.js';
 import { productRoutes } from './modules/products/routes/product.routes.js';
 import { productSyncRoutes } from './modules/products/routes/product-sync.routes.js';
+import { recommendationRoutes } from './modules/recommendations/routes/recommendation.routes.js';
+import { salesIntelligenceRoutes } from './modules/sales-intelligence/routes/sales-intelligence.routes.js';
 import { healthRoutes } from './routes/health.js';
 import { systemRoutes } from './routes/system.js';
 
@@ -82,6 +84,8 @@ export async function buildApp(): Promise<FastifyInstance> {
   await app.register(orderAdminRoutes);
   await app.register(productRoutes);
   await app.register(productSyncRoutes);
+  await app.register(recommendationRoutes);
+  await app.register(salesIntelligenceRoutes);
 
   app.setNotFoundHandler(async (_request, reply) => {
     return reply.code(404).send({

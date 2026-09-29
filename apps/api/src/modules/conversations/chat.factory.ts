@@ -31,5 +31,12 @@ export function createChatService(prisma: PrismaClient, logger: FastifyBaseLogge
     env.AI_CONFIDENCE_LOW,
     new CustomerJourneyService(prisma),
     followUpQueue ? new FollowUpService(prisma, followUpQueue) : undefined,
+    {
+      enabled: env.RECOMMENDATION_ENABLED,
+      maxRecommendations: env.RECOMMENDATION_MAX_PRODUCTS,
+      crossSellEnabled: env.RECOMMENDATION_CROSS_SELL_ENABLED,
+      upsellEnabled: env.RECOMMENDATION_UPSELL_ENABLED,
+      cacheTtlSeconds: env.RECOMMENDATION_CACHE_TTL_SECONDS,
+    },
   );
 }
