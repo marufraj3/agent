@@ -159,7 +159,7 @@ export class HumanHandoverService {
 
   private log(tx: any, type: string, conversationId: string, metadata: Record<string, unknown>) {
     return tx.systemLog.create({
-      data: { level: 'INFO', type, message: type.replaceAll('_', ' ').toLowerCase(), metadata: { conversationId, ...metadata } },
+      data: { level: 'INFO', type, event: type, module: 'handovers', conversationId, message: type.replaceAll('_', ' ').toLowerCase(), metadata },
     });
   }
 }

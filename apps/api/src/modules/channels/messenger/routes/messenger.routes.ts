@@ -105,7 +105,7 @@ export async function messengerRoutes(app: FastifyInstance): Promise<void> {
     return { success: true, data: { queued, externalEventId: event.externalEventId } };
   });
 
-  app.get('/api/admin/integrations/facebook/status', { preHandler: requireAdmin }, async () => {
+  const facebookStatus = async () => {
     const db = app.prisma as any;
     const [lastWebhook, lastOutbound, lastFailure] = await Promise.all([
       db.messengerEventLog.findFirst({ orderBy: { receivedAt: 'desc' } }),
@@ -124,5 +124,16 @@ export async function messengerRoutes(app: FastifyInstance): Promise<void> {
         lastError: lastFailure?.errorMessage ?? null,
       },
     };
+  };
+  app.get('/api/admin/integrations/facebook/status', { preHandler: requireAdmin }, facebookStatus);
+  app.get('/api/admin/settings/facebook', { preHandler: requireAdmin }, facebookStatus);
+  app.post('/api/admin/settings/facebook/test', { preHandler: requireAdmin }, async () => {
+    if (!config.pageAccessToken || !config.pageId) throw new AppError('Facebook is not configured', 503, 'MESSENGER_NOT_CONFIGURED');
+    const response = await fetch(`https://graph.facebook.com/${config.graphApiVersion}/${encodeURIComponent(config.pageId)}?fields=id,name`, {
+      headers: { authorization: `Bearer ${config.pageAccessToken}` }, signal: AbortSignal.timeout(config.timeoutMs),
+    }).catch(() => null);
+    if (!response?.ok) throw new AppError('Facebook connection test failed', 502, 'FACEBOOK_CONNECTION_FAILED');
+    const body = await response.json() as Record<string, unknown>;
+    return { success: true, message: 'Facebook connection is healthy', data: { pageId: typeof body.id === 'string' ? body.id : config.pageId, pageName: typeof body.name === 'string' ? body.name : null } };
   });
 }

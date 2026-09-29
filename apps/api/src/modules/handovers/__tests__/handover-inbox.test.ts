@@ -109,8 +109,18 @@ test('inbox product code search is performed in order items by the database', as
   await new AdminInboxService(db).list({ page: 1, limit: 25, filter: 'all', search: 'TX170' });
   assert.equal(JSON.stringify(where).includes('productCode'), true);
 });
-test('inbox schema limits page sizes', () => {
+test('inbox schema supports production UI filters and limits page sizes', () => {
+  for (const filter of ['all', 'unread', 'ai', 'human', 'closed', 'messenger', 'web']) {
+    assert.equal(inboxQuerySchema.safeParse({ filter }).success, true);
+  }
   assert.equal(inboxQuerySchema.safeParse({ limit: 101 }).success, false); assert.equal(inboxQuerySchema.parse({}).page, 1);
+});
+
+test('inbox message text search is executed at database level', async () => {
+  let where: any;
+  const db: any = { conversation: { findMany: async (value: any) => { where = value.where; return []; }, count: async () => 0 } };
+  await new AdminInboxService(db).list({ page: 1, limit: 25, filter: 'all', search: 'delivery kobe' });
+  assert.equal(JSON.stringify(where).includes('content'), true);
 });
 
 test('admin opens conversation and clears unread state', async () => {

@@ -1,4 +1,4 @@
-import { Prisma, type PrismaClient } from '@alzeena/database';
+import { Prisma, type PrismaClient } from "@alzeena/database";
 
 const MAX_TRANSACTION_ATTEMPTS = 3;
 
@@ -14,9 +14,50 @@ export class KnowledgeBaseService {
   async getActiveKnowledgeBase(): Promise<ActiveKnowledgeBase | null> {
     return this.prisma.knowledgeBase.findFirst({
       where: { isActive: true },
-      orderBy: { version: 'desc' },
+      orderBy: { version: "desc" },
       select: { content: true, version: true, updatedAt: true },
     });
+  }
+
+  async listVersions(page = 1, limit = 20) {
+    const [items, total] = await Promise.all([
+      this.prisma.knowledgeBase.findMany({
+        orderBy: { version: "desc" },
+        skip: (page - 1) * limit,
+        take: limit,
+        select: {
+          id: true,
+          version: true,
+          isActive: true,
+          createdAt: true,
+          updatedAt: true,
+        },
+      }),
+      this.prisma.knowledgeBase.count(),
+    ]);
+    return { items, page, limit, total, pages: Math.ceil(total / limit) };
+  }
+
+  async getVersion(version: number) {
+    return this.prisma.knowledgeBase.findUnique({
+      where: { version },
+      select: {
+        content: true,
+        version: true,
+        isActive: true,
+        createdAt: true,
+        updatedAt: true,
+      },
+    });
+  }
+
+  async restoreVersion(version: number): Promise<ActiveKnowledgeBase> {
+    const source = await this.prisma.knowledgeBase.findUnique({
+      where: { version },
+      select: { content: true },
+    });
+    if (!source) throw new Error("KNOWLEDGE_BASE_VERSION_NOT_FOUND");
+    return this.updateKnowledgeBase(source.content);
   }
 
   async updateKnowledgeBase(content: string): Promise<ActiveKnowledgeBase> {
@@ -27,7 +68,7 @@ export class KnowledgeBaseService {
             const [active, latestVersion] = await Promise.all([
               transaction.knowledgeBase.findFirst({
                 where: { isActive: true },
-                orderBy: { version: 'desc' },
+                orderBy: { version: "desc" },
                 select: { id: true, version: true },
               }),
               transaction.knowledgeBase.aggregate({ _max: { version: true } }),
@@ -48,11 +89,13 @@ export class KnowledgeBaseService {
 
             await transaction.systemLog.create({
               data: {
-                level: 'INFO',
-                type: 'ADMIN_KNOWLEDGE_BASE_UPDATED',
-                message: 'Admin updated the active Knowledge Base',
+                level: "INFO",
+                type: "ADMIN_KNOWLEDGE_BASE_UPDATED",
+                event: "ADMIN_KNOWLEDGE_BASE_UPDATED",
+                module: "admin",
+                message: "Admin updated the active Knowledge Base",
                 metadata: {
-                  action: 'knowledge_base.update',
+                  action: "knowledge_base.update",
                   version,
                   previousVersion: active?.version ?? null,
                   contentLength: content.length,
@@ -68,12 +111,12 @@ export class KnowledgeBaseService {
       } catch (error) {
         const retryable =
           error instanceof Prisma.PrismaClientKnownRequestError &&
-          ['P2002', 'P2034'].includes(error.code);
+          ["P2002", "P2034"].includes(error.code);
         if (!retryable || attempt === MAX_TRANSACTION_ATTEMPTS) throw error;
       }
     }
 
-    throw new Error('Knowledge Base update failed after transaction retries');
+    throw new Error("Knowledge Base update failed after transaction retries");
   }
 }
 

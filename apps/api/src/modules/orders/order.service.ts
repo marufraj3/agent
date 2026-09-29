@@ -345,9 +345,13 @@ export class OrderService {
     if (!['DRAFT', 'AWAITING_INFORMATION', 'AWAITING_CONFIRMATION', 'FAILED'].includes(order.status)) {
       throw new OrderEngineError('Order cannot be cancelled in its current state', 'INVALID_ORDER_TRANSITION');
     }
-    return this.db.order.update({
-      where: { id: orderId },
-      data: { status: 'CANCELLED', confirmationStatus: 'REJECTED' },
+    return this.db.$transaction(async (tx: any) => {
+      const cancelled = await tx.order.update({
+        where: { id: orderId },
+        data: { status: 'CANCELLED', confirmationStatus: 'REJECTED' },
+      });
+      await this.log(tx, 'ORDER_CANCELLED', orderId, { previousStatus: order.status });
+      return cancelled;
     });
   }
 
@@ -602,6 +606,8 @@ export class OrderService {
       data: {
         level: 'INFO',
         type,
+        event: type,
+        module: 'orders',
         message: type.replaceAll('_', ' ').toLowerCase(),
         metadata: { orderId, ...metadata },
       },

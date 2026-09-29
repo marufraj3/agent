@@ -1,23 +1,162 @@
-'use client';
-
-import Link from 'next/link';
-import { useCallback, useEffect, useState } from 'react';
-import { AdminAccess } from '../_components/admin-access';
-import { adminRequest, useAdminPassword } from '../_lib/admin-client';
-
-type Queue = { name: string; counts: Record<string, number> };
-type Health = { status: string; database: string; redis: string; queues: Queue[]; workers: {name:string; heartbeat:string|null}[]; uptimeSeconds:number; latestProductSync:{createdAt:string}|null; productMetrics:{available:number;stale:number;staleAfterHours:number}|null; circuits:{service:string;state:string;failures:number}[] };
-type Window = { days:number; customers:number; conversations:number; orders:number; failedEvents:number };
-export default function SystemPage() {
-  const { password, setPassword, hydrated } = useAdminPassword(); const [health,setHealth]=useState<Health>(); const [analytics,setAnalytics]=useState<Window[]>([]); const [error,setError]=useState(''); const [loading,setLoading]=useState(false);
-  const load=useCallback(async()=>{if(!password)return;setLoading(true);setError('');try{const [h,a]=await Promise.all([adminRequest<{data:Health}>('/admin/system/health',password),adminRequest<{data:Window[]}>('/admin/system/analytics',password)]);setHealth(h.data);setAnalytics(a.data)}catch(e){setError(e instanceof Error?e.message:'Could not load system health')}finally{setLoading(false)}},[password]);
-  useEffect(()=>{if(hydrated&&password)void load()},[hydrated,password,load]);
-  return <main className="mx-auto max-w-6xl px-5 py-10 sm:px-8"><div className="flex items-end justify-between"><div><h1 className="text-4xl font-semibold">System health</h1><p className="mt-2 text-stone-600">Dependencies, workers, queues and recent activity.</p></div><Link className="rounded-full bg-stone-900 px-4 py-2 text-sm text-white" href="/admin/system/jobs">Manage jobs</Link></div>
-  <AdminAccess password={password} onPasswordChange={setPassword} onLoad={()=>void load()} loading={loading}/>{error?<p className="mt-4 rounded-xl bg-red-50 p-4 text-red-700">{error}</p>:null}
-  {health?<><div className="mt-6 grid gap-3 sm:grid-cols-3">{([['Overall',health.status],['Database',health.database],['Redis',health.redis]] as [string,string][]).map(([a,b])=><Card key={a} label={a} value={b}/>)}</div>
-  <div className="mt-3 grid gap-3 sm:grid-cols-2"><Card label="Latest product sync" value={health.latestProductSync?new Date(health.latestProductSync.createdAt).toLocaleString():'No completed sync'}/><Card label="Product freshness" value={health.productMetrics?`${health.productMetrics.available} available · ${health.productMetrics.stale} stale over ${health.productMetrics.staleAfterHours}h`:'Unavailable'}/></div>
-  <h2 className="mt-8 text-xl font-semibold">Queues</h2><div className="mt-3 grid gap-3 lg:grid-cols-2">{health.queues.map(q=><Card key={q.name} label={q.name} value={Object.entries(q.counts).map(([k,v])=>`${k}: ${v}`).join(' · ')}/>)}</div>
-  <h2 className="mt-8 text-xl font-semibold">Workers & services</h2><div className="mt-3 grid gap-3 sm:grid-cols-2">{health.workers.map(w=><Card key={w.name} label={w.name} value={w.heartbeat?`Heartbeat ${new Date(w.heartbeat).toLocaleString()}`:'No active heartbeat'}/>)}{health.circuits.map(c=><Card key={c.service} label={`${c.service} circuit`} value={`${c.state} · ${c.failures} failures`}/>)}</div>
-  <h2 className="mt-8 text-xl font-semibold">Today / 7 / 30 days</h2><div className="mt-3 grid gap-3 sm:grid-cols-3">{analytics.map(a=><Card key={a.days} label={a.days===1?'Today':`${a.days} days`} value={`${a.customers} customers · ${a.conversations} conversations · ${a.orders} orders · ${a.failedEvents} errors`}/>)}</div></>:null}</main>;
+"use client";
+import Link from "next/link";
+import { useCallback, useEffect, useState } from "react";
+import { AdminAccess } from "../_components/admin-access";
+import { Badge, ErrorState, LoadingRows } from "../_components/ui";
+import { adminRequest, useAdminPassword } from "../_lib/admin-client";
+type Q = { name: string; available: boolean; counts: Record<string, number> };
+type H = {
+  status: string;
+  database: string;
+  redis: string;
+  queues: Q[];
+  workers: Array<{ name: string; heartbeat: string | null }>;
+  circuits: Array<{ service: string; state: string; failures: number }>;
+  latestProductSync: { createdAt: string } | null;
+  productMetrics: { available: number; stale: number } | null;
+  uptimeSeconds: number;
+};
+export default function System() {
+  const { password, setPassword, hydrated } = useAdminPassword();
+  const [data, setData] = useState<H>();
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+  const load = useCallback(async () => {
+    if (!password) return;
+    setLoading(true);
+    setError("");
+    try {
+      setData(
+        (await adminRequest<{ data: H }>("/admin/system/health", password))
+          .data,
+      );
+    } catch (e) {
+      setError(
+        e instanceof Error ? e.message : "Unable to load system health.",
+      );
+    } finally {
+      setLoading(false);
+    }
+  }, [password]);
+  useEffect(() => {
+    if (hydrated && password) void load();
+  }, [hydrated, password, load]);
+  return (
+    <main className="mx-auto max-w-7xl px-4 py-8 sm:px-8">
+      <h1 className="text-3xl font-semibold">System</h1>
+      <div className="mt-4 flex gap-2">
+        <Tab href="/admin/system" label="Health" active />
+        <Tab href="/admin/system#queues" label="Queues" />
+        <Tab href="/admin/system/jobs" label="Jobs" />
+        <Tab href="/admin/system/logs" label="Logs" />
+      </div>
+      <div className="mt-5">
+        <AdminAccess
+          password={password}
+          onPasswordChange={setPassword}
+          onLoad={() => void load()}
+          loading={loading}
+        />
+      </div>
+      {error ? (
+        <div className="mt-5">
+          <ErrorState message={error} retry={() => void load()} />
+        </div>
+      ) : null}
+      {loading && !data ? (
+        <LoadingRows />
+      ) : data ? (
+        <>
+          <section className="mt-6 grid gap-3 sm:grid-cols-3">
+            <Card k="API" v={data.status} />
+            <Card k="Database" v={data.database} />
+            <Card k="Redis" v={data.redis} />
+          </section>
+          <section className="mt-7">
+            <h2 className="mb-3 text-xl font-semibold">Workers & circuits</h2>
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+              {data.workers.map((w) => (
+                <Card
+                  key={w.name}
+                  k={w.name}
+                  v={
+                    w.heartbeat
+                      ? `Active · ${new Date(w.heartbeat).toLocaleTimeString()}`
+                      : "No heartbeat"
+                  }
+                />
+              ))}
+              {data.circuits.map((c) => (
+                <Card
+                  key={c.service}
+                  k={`${c.service} circuit`}
+                  v={`${c.state} · ${c.failures} failures`}
+                />
+              ))}
+            </div>
+          </section>
+          <section id="queues" className="mt-7 scroll-mt-4">
+            <h2 className="mb-3 text-xl font-semibold">Queues</h2>
+            <div className="grid gap-3 sm:grid-cols-2">
+              {data.queues.map((q) => (
+                <div key={q.name} className="rounded-2xl border bg-white p-5">
+                  <div className="flex justify-between">
+                    <strong>{q.name}</strong>
+                    <Badge tone={q.available ? "green" : "red"}>
+                      {q.available ? "Available" : "Unavailable"}
+                    </Badge>
+                  </div>
+                  <p className="mt-3 text-sm text-stone-600">
+                    {Object.entries(q.counts)
+                      .map(([k, v]) => `${k}: ${v}`)
+                      .join(" · ") || "No counts"}
+                  </p>
+                </div>
+              ))}
+            </div>
+          </section>
+          <section className="mt-7 rounded-2xl border bg-white p-5">
+            <h2 className="text-lg font-semibold">Product sync</h2>
+            <p className="mt-2 text-sm">
+              Last sync:{" "}
+              {data.latestProductSync
+                ? new Date(data.latestProductSync.createdAt).toLocaleString()
+                : "Never"}{" "}
+              · Available products: {data.productMetrics?.available ?? "—"} ·
+              Stale: {data.productMetrics?.stale ?? "—"}
+            </p>
+          </section>
+        </>
+      ) : null}
+    </main>
+  );
 }
-function Card({label,value}:{label:string;value:string}){return <section className="rounded-2xl border border-stone-200 bg-white p-5 shadow-sm"><p className="text-xs font-semibold uppercase tracking-wider text-stone-400">{label}</p><p className="mt-2 font-medium text-stone-900">{value}</p></section>}
+function Tab({
+  href,
+  label,
+  active = false,
+}: {
+  href: string;
+  label: string;
+  active?: boolean;
+}) {
+  return (
+    <Link
+      href={href}
+      className={`rounded-full px-4 py-2 text-sm font-semibold ${active ? "bg-stone-900 text-white" : "border bg-white"}`}
+    >
+      {label}
+    </Link>
+  );
+}
+function Card({ k, v }: { k: string; v: string }) {
+  const good = /up|ok|active|closed/i.test(v);
+  return (
+    <div className="rounded-2xl border bg-white p-5">
+      <p className="text-xs uppercase text-stone-400">{k}</p>
+      <div className="mt-2">
+        <Badge tone={good ? "green" : "amber"}>{v}</Badge>
+      </div>
+    </div>
+  );
+}

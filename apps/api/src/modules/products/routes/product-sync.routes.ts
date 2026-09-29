@@ -12,7 +12,7 @@ export async function productSyncRoutes(app: FastifyInstance): Promise<void> {
     return reply.code(202).send({
       success: true,
       message: 'Product sync job queued',
-      jobId: job.id,
+      data: { jobId: job.id },
     });
   });
 
@@ -37,6 +37,6 @@ export async function productSyncRoutes(app: FastifyInstance): Promise<void> {
       },
     });
 
-    return { success: true, latest: logs[0] ?? null, history: logs };
+    return { success: true, data: { latest: logs[0] ?? null, history: logs } };
   });
 }

@@ -7,6 +7,7 @@ import { AppError } from './errors/app-error.js';
 import { registerInfrastructure } from './infrastructure/register.js';
 import { enforceRateLimit } from './infrastructure/rate-limit.js';
 import { adminRoutes } from './modules/admin/routes/admin.routes.js';
+import { dashboardRoutes } from './modules/admin/routes/dashboard.routes.js';
 import { aiTestRoutes } from './modules/ai/routes/ai-test.routes.js';
 import { audioRoutes } from './modules/audio/routes/audio.routes.js';
 import { messengerRoutes } from './modules/channels/messenger/routes/messenger.routes.js';
@@ -48,6 +49,7 @@ export async function buildApp(): Promise<FastifyInstance> {
   await app.register(healthRoutes);
   await app.register(systemRoutes);
   await app.register(adminRoutes);
+  await app.register(dashboardRoutes);
   await app.register(aiTestRoutes);
   await app.register(audioRoutes);
   await app.register(messengerRoutes);

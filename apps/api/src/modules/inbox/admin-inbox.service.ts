@@ -4,7 +4,7 @@ import type { HandoverReasonName } from '../handovers/handover.types.js';
 import { resolveEffectivePrice } from '../products/effective-price.js';
 import { MessageDeliveryService } from './message-delivery.service.js';
 
-export type InboxFilter = 'all' | 'pending' | 'mine' | 'active' | 'closed';
+export type InboxFilter = 'all' | 'unread' | 'ai' | 'human' | 'closed' | 'messenger' | 'web' | 'pending' | 'mine' | 'active';
 
 export interface InboxQuery {
   page: number;
@@ -43,20 +43,29 @@ export class AdminInboxService {
           take: 20,
         })).map((product: { websiteProductId: number }) => product.websiteProductId)
       : [];
-    const statusFilter = query.filter === 'active'
+    const statusFilter = query.filter === 'active' || query.filter === 'ai'
       ? { status: 'ACTIVE' }
-      : query.filter === 'closed'
-        ? { status: 'CLOSED' }
-        : query.filter === 'pending'
-          ? { status: 'HUMAN', assignedTo: null }
-          : query.filter === 'mine'
-            ? { status: 'HUMAN', assignedTo: this.actorId }
-            : {};
+      : query.filter === 'human'
+        ? { status: 'HUMAN' }
+        : query.filter === 'closed'
+          ? { status: 'CLOSED' }
+          : query.filter === 'unread'
+            ? { unreadForAdmin: true }
+            : query.filter === 'messenger'
+              ? { channel: 'MESSENGER' }
+              : query.filter === 'web'
+                ? { channel: 'WEB' }
+                : query.filter === 'pending'
+                  ? { status: 'HUMAN', assignedTo: null }
+                  : query.filter === 'mine'
+                    ? { status: 'HUMAN', assignedTo: this.actorId }
+                    : {};
     const searchFilter = search ? {
       OR: [
         { id: this.uuid(search) ? search : undefined },
         { customer: { is: { name: { contains: search, mode: 'insensitive' } } } },
         { customer: { is: { phone: { contains: search } } } },
+        { messages: { some: { content: { contains: search, mode: 'insensitive' } } } },
         ...(matchingProductIds.length > 0
           ? [{ messages: { some: { OR: matchingProductIds.map((id) => ({
               metadata: { path: ['productIds'], array_contains: [id] },
@@ -90,12 +99,12 @@ export class AdminInboxService {
     return { items, total, unreadTotal, page: query.page, limit: query.limit, pages: Math.ceil(total / query.limit) };
   }
 
-  async getConversation(id: string, markRead = true) {
+  async getConversation(id: string, markRead = true, messagePage = 1, messageLimit = 50) {
     const conversation = await this.db.conversation.findUnique({
       where: { id },
       include: {
         customer: true,
-        messages: { orderBy: [{ createdAt: 'asc' }, { id: 'asc' }], take: 5_000 },
+        messages: { orderBy: [{ createdAt: 'desc' }, { id: 'desc' }], skip: (messagePage - 1) * messageLimit, take: messageLimit },
         handovers: { orderBy: { createdAt: 'desc' }, take: 20 },
         orders: { orderBy: { createdAt: 'desc' }, take: 20, include: { items: true } },
         notifications: { orderBy: { createdAt: 'desc' }, take: 20 },
@@ -128,7 +137,17 @@ export class AdminInboxService {
         id: variation.websiteVariationId, size: variation.sizeName, stock: variation.stockQuantity,
       })),
     }));
-    return { ...conversation, discussedProducts };
+    return {
+      ...conversation,
+      messages: conversation._count ? [...conversation.messages].reverse() : conversation.messages,
+      discussedProducts,
+      messagesPagination: {
+        page: messagePage,
+        limit: messageLimit,
+        total: conversation._count?.messages ?? conversation.messages.length,
+        pages: Math.ceil((conversation._count?.messages ?? conversation.messages.length) / messageLimit),
+      },
+    };
   }
 
   async sendHumanMessage(conversationId: string, content: string) {
@@ -264,7 +283,7 @@ export class AdminInboxService {
 
   private log(tx: any, type: string, conversationId: string, metadata: Record<string, unknown>) {
     return tx.systemLog.create({
-      data: { level: 'INFO', type, message: type.replaceAll('_', ' ').toLowerCase(), metadata: { conversationId, ...metadata } },
+      data: { level: 'INFO', type, event: type, module: 'inbox', conversationId, message: type.replaceAll('_', ' ').toLowerCase(), metadata },
     });
   }
 }

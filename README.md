@@ -1,8 +1,8 @@
 # Alzeena Fashion Sales Agent
 
-Production-oriented foundation for the Alzeena Fashion AI sales agent. The repository currently contains **Steps 1–12**: the web application, API, infrastructure configuration, PostgreSQL/Prisma data layer, product synchronization, protected business administration, the modular Gemini-backed AI core, persistent multimodal conversation memory, the deterministic Order Engine, human-handover Admin Inbox, and a queued Facebook Messenger channel adapter.
+Production-oriented foundation for the Alzeena Fashion AI sales agent. The repository currently contains **Steps 1–13**: the web application, API, infrastructure configuration, PostgreSQL/Prisma data layer, product synchronization, protected business administration, the modular Gemini-backed AI core, persistent multimodal conversation memory, the deterministic Order Engine, human-handover Admin Inbox, and a queued Facebook Messenger channel adapter.
 
-Step 11 adds signed Meta webhooks, event normalization and deduplication, a BullMQ Messenger worker, text/image/voice routing through the existing conversation system, safe outbound delivery, and real Messenger delivery for admin replies. It does not add WhatsApp, Instagram DM, voice replies, campaigns, broadcasts, comment automation, or analytics.
+Step 11 adds signed Meta webhooks, event normalization and deduplication, a BullMQ Messenger worker, text/image/voice routing through the existing conversation system, safe outbound delivery, and real Messenger delivery for admin replies. It does not add WhatsApp, Instagram DM, voice replies, campaigns, broadcasts, comment automation, or advanced campaign analytics.
 
 ## Architecture
 
@@ -641,3 +641,21 @@ Gemini retries one temporary failure before safe fallback and has a circuit brea
 7. Test restore procedures regularly. For restart: stop ingress/workers gracefully, back up, deploy/migrate, start API, then workers, and watch failed/stalled counts.
 
 Troubleshooting: check the response `x-request-id` in structured logs; inspect `/admin/system` and `/admin/system/jobs`; verify Redis persistence/connectivity for missing work; restart a missing worker; resolve credentials or upstream health for open circuits; wait for cooldown before a probe; and reconcile unknown orders against the Order Engine before any manual retry. Do not paste secrets or raw customer addresses/phones into tickets.
+
+## Step 13 Admin operations console
+
+The responsive admin console is organized around Dashboard, Inbox, Customers, Orders, Products, Knowledge Base, Settings, and System. It reuses the one-admin-password model: the credential remains in tab-scoped `sessionStorage`, is sent only in `x-admin-password`, can be cleared with Logout, is timing-safe on the API, and invalid attempts are limited to 10/IP/minute in addition to the global API limit. Future roles can be represented by filtering the central navigation configuration without changing pages; Step 13 intentionally does not add multi-role RBAC.
+
+### Admin routes
+
+- `/admin` — backend-filtered Today, Yesterday, 7-day, 30-day, or custom dashboard statistics and dependency status.
+- `/admin/inbox` — paginated/searchable channel inbox, 15-second polling, AI/human lifecycle controls, media display, customer/order/product context, database quick replies, and Messenger-backed human text delivery.
+- `/admin/customers` and `/admin/customers/:id` — paginated search, activity totals, conversations, orders, and recent message history.
+- `/admin/orders` and `/admin/orders/:id` — paginated filters/search and server-calculated order detail/submission state.
+- `/admin/products` and `/admin/products/:id` — read-only synced catalogue search, stock filters, product/variation detail, and sync timestamps. Website product data cannot be edited here.
+- `/admin/knowledge-base` — single large editor with immutable version history, preview, and confirmed restore-as-new-version.
+- `/admin/settings` — delivery/order settings, environment-controlled read-only AI configuration, and quick reply CRUD.
+- `/admin/settings/facebook` — masked connection health and explicit Graph API connection test; tokens are never returned.
+- `/admin/system`, `/admin/system/jobs`, and `/admin/system/logs` — health/queues, paginated retained failures, authorized stack detail, and sanitized structured logs.
+
+Apply migration `20260929220000_admin_dashboard` to create and seed `quick_replies`. Dashboard/customers/orders/products/logs/jobs queries paginate and filter in PostgreSQL or Redis; the browser does not fetch entire datasets. Messenger image attachment sending is not offered because the current Step 11 outbound delivery provider supports text only; inbound images/audio are previewed safely. Full WebSockets remain future work, while inbox polling and isolated loading functions provide a replaceable real-time boundary.

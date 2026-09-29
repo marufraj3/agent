@@ -100,6 +100,8 @@ export class SettingsService {
         data: {
           level: 'INFO',
           type: 'ADMIN_SETTINGS_UPDATED',
+          event: 'ADMIN_SETTINGS_UPDATED',
+          module: 'admin',
           message: 'Admin updated business settings',
           metadata: {
             action: 'settings.update',

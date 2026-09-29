@@ -55,3 +55,14 @@ export const settingsUpdateSchema = z
   .refine((settings) => Object.keys(settings).length > 0, 'At least one setting is required');
 
 export type SettingsUpdateInput = z.infer<typeof settingsUpdateSchema>;
+
+export const quickReplySchema = z.object({
+  title: z.string().trim().min(1).max(120),
+  message: z.string().trim().min(1).max(4_000),
+  enabled: z.boolean().default(true),
+  sortOrder: z.number().int().min(0).max(10_000).default(0),
+}).strict();
+export const quickReplyUpdateSchema = quickReplySchema.partial().refine(
+  (value) => Object.keys(value).length > 0,
+  'At least one field is required',
+);

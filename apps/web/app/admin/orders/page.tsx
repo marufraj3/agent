@@ -1,45 +1,203 @@
-'use client';
-
-import Link from 'next/link';
-import { useCallback, useEffect, useRef, useState } from 'react';
-import { AdminAccess } from '../_components/admin-access';
-import { adminRequest, useAdminPassword } from '../_lib/admin-client';
-
-type Order = {
-  id: string; status: string; submissionResult: string; totalQuantity: number;
-  totalAmount: string; currency: string; externalOrderId: string | null; createdAt: string;
+"use client";
+import Link from "next/link";
+import { useCallback, useEffect, useState } from "react";
+import { AdminAccess } from "../_components/admin-access";
+import {
+  Badge,
+  EmptyState,
+  ErrorState,
+  LoadingRows,
+  Pagination,
+} from "../_components/ui";
+import { adminRequest, useAdminPassword } from "../_lib/admin-client";
+type O = {
+  id: string;
+  orderCode: string | null;
+  status: string;
+  confirmationStatus: string;
+  source: string;
+  totalQuantity: number;
+  subtotal: string;
+  deliveryCharge: string;
+  totalAmount: string;
+  externalOrderId: string | null;
+  createdAt: string;
   customerSnapshot: { name?: string; phone?: string };
+  customer?: { name: string | null; phone: string | null };
+  items: Array<unknown>;
 };
-
-export default function OrdersPage() {
+const statuses: Array<[string, string]> = [
+  ["", "All"],
+  ["DRAFT", "Draft"],
+  ["AWAITING_INFORMATION", "Awaiting Information"],
+  ["AWAITING_CONFIRMATION", "Awaiting Confirmation"],
+  ["CONFIRMED", "Confirmed"],
+  ["SUBMITTED", "Submitted"],
+  ["COMPLETED", "Completed"],
+  ["CANCELLED", "Cancelled"],
+  ["FAILED", "Failed"],
+];
+export default function Orders() {
   const { password, setPassword, hydrated } = useAdminPassword();
-  const [items, setItems] = useState<Order[]>([]);
-  const [error, setError] = useState('');
+  const [items, setItems] = useState<O[]>([]);
+  const [status, setStatus] = useState("");
+  const [searchInput, setSearchInput] = useState("");
+  const [search, setSearch] = useState("");
+  const [page, setPage] = useState(1);
+  const [pages, setPages] = useState(1);
   const [loading, setLoading] = useState(false);
-  const attempted = useRef(false);
+  const [error, setError] = useState("");
   const load = useCallback(async () => {
     if (!password) return;
-    setLoading(true); setError('');
+    setLoading(true);
+    setError("");
     try {
-      const response = await adminRequest<{ success: true; data: Order[] }>('/admin/orders?limit=100', password);
-      setItems(response.data);
-    } catch (caught) { setError(caught instanceof Error ? caught.message : 'Could not load orders.'); }
-    finally { setLoading(false); }
-  }, [password]);
-  useEffect(() => { if (hydrated && !attempted.current) { attempted.current = true; if (password) void load(); } }, [hydrated, password, load]);
-
-  return <main className="mx-auto max-w-7xl px-5 py-10 sm:px-8 sm:py-14">
-    <h1 className="mb-2 text-4xl font-semibold tracking-tight">Orders</h1>
-    <p className="mb-8 text-stone-600">Review AI-assisted drafts, confirmations, and website submission outcomes.</p>
-    <AdminAccess password={password} onPasswordChange={setPassword} onLoad={() => void load()} loading={loading} />
-    {error ? <p className="mt-5 text-sm font-medium text-red-700">{error}</p> : null}
-    <div className="mt-6 overflow-x-auto rounded-2xl border border-stone-200 bg-white shadow-sm">
-      <table className="w-full text-left text-sm"><thead className="bg-stone-50 text-stone-500"><tr><th className="p-4">Customer</th><th className="p-4">Status</th><th className="p-4">Submission</th><th className="p-4">Items</th><th className="p-4">Total</th><th className="p-4">Created</th></tr></thead>
-      <tbody>{items.map((item) => <tr key={item.id} className="border-t border-stone-100">
-        <td className="p-4"><Link className="font-semibold text-amber-800 hover:underline" href={`/admin/orders/${item.id}`}>{item.customerSnapshot?.name ?? item.customerSnapshot?.phone ?? 'Customer'}</Link><p className="mt-1 font-mono text-xs text-stone-400">{item.externalOrderId ?? item.id}</p></td>
-        <td className="p-4 lowercase">{item.status.replaceAll('_', ' ')}</td><td className="p-4 lowercase">{item.submissionResult.replaceAll('_', ' ')}</td><td className="p-4">{item.totalQuantity}</td><td className="p-4">৳{Number(item.totalAmount).toFixed(2)}</td><td className="p-4">{new Date(item.createdAt).toLocaleString()}</td>
-      </tr>)}</tbody></table>
-      {!loading && items.length === 0 ? <p className="p-8 text-center text-stone-500">No orders loaded.</p> : null}
-    </div>
-  </main>;
+      const q = new URLSearchParams({ page: String(page), limit: "25" });
+      if (status) q.set("status", status);
+      if (search) q.set("search", search);
+      const r = await adminRequest<{
+        data: O[];
+        pagination: { pages: number };
+      }>(`/admin/orders?${q}`, password);
+      setItems(r.data);
+      setPages(r.pagination.pages);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Unable to load orders.");
+    } finally {
+      setLoading(false);
+    }
+  }, [password, status, search, page]);
+  useEffect(() => {
+    if (hydrated && password) void load();
+  }, [hydrated, password, load]);
+  return (
+    <main className="mx-auto max-w-[1500px] px-4 py-8 sm:px-8">
+      <h1 className="text-3xl font-semibold">Orders</h1>
+      <p className="mt-1 text-stone-600">
+        Server-calculated drafts, confirmations and submission outcomes.
+      </p>
+      <div className="mt-5">
+        <AdminAccess
+          password={password}
+          onPasswordChange={setPassword}
+          onLoad={() => void load()}
+          loading={loading}
+        />
+      </div>
+      <form
+        onSubmit={(e) => {
+          e.preventDefault();
+          setPage(1);
+          setSearch(searchInput.trim());
+        }}
+        className="mt-5 flex gap-2"
+      >
+        <input
+          value={searchInput}
+          onChange={(e) => setSearchInput(e.target.value)}
+          placeholder="Order ID, phone or customer name"
+          className="min-w-0 flex-1 rounded-xl border bg-white px-4 py-2.5"
+        />
+        <button className="rounded-xl bg-stone-900 px-5 text-white">
+          Search
+        </button>
+      </form>
+      <div className="mt-3 flex gap-2 overflow-x-auto">
+        {statuses.map(([k, l]) => (
+          <button
+            key={l}
+            onClick={() => {
+              setStatus(k);
+              setPage(1);
+            }}
+            className={`whitespace-nowrap rounded-full px-3 py-1.5 text-xs font-semibold ${status === k ? "bg-amber-700 text-white" : "border bg-white"}`}
+          >
+            {l}
+          </button>
+        ))}
+      </div>
+      {error ? (
+        <div className="mt-5">
+          <ErrorState message={error} retry={() => void load()} />
+        </div>
+      ) : null}
+      <div className="mt-5 overflow-x-auto rounded-2xl border bg-white">
+        <table className="w-full min-w-[1200px] text-left text-sm">
+          <thead className="bg-stone-50 text-stone-500">
+            <tr>
+              {[
+                "Order ID",
+                "Customer",
+                "Phone",
+                "Items",
+                "Quantity",
+                "Subtotal",
+                "Delivery",
+                "Total",
+                "Status",
+                "Confirmation",
+                "Source",
+                "Created",
+              ].map((x) => (
+                <th key={x} className="p-4">
+                  {x}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {items.map((o) => (
+              <tr key={o.id} className="border-t">
+                <td className="p-4">
+                  <Link
+                    href={`/admin/orders/${o.id}`}
+                    className="font-semibold text-amber-800"
+                  >
+                    {o.externalOrderId ?? o.orderCode ?? o.id.slice(0, 8)}
+                  </Link>
+                </td>
+                <td className="p-4">
+                  {o.customer?.name ?? o.customerSnapshot.name ?? "—"}
+                </td>
+                <td className="p-4">
+                  {o.customer?.phone ?? o.customerSnapshot.phone ?? "—"}
+                </td>
+                <td className="p-4">{o.items.length}</td>
+                <td className="p-4">{o.totalQuantity}</td>
+                <td className="p-4">৳{Number(o.subtotal).toFixed(2)}</td>
+                <td className="p-4">৳{Number(o.deliveryCharge).toFixed(2)}</td>
+                <td className="p-4 font-semibold">
+                  ৳{Number(o.totalAmount).toFixed(2)}
+                </td>
+                <td className="p-4">
+                  <Badge
+                    tone={
+                      o.status === "FAILED"
+                        ? "red"
+                        : o.status === "COMPLETED" || o.status === "SUBMITTED"
+                          ? "green"
+                          : "amber"
+                    }
+                  >
+                    {o.status.replaceAll("_", " ")}
+                  </Badge>
+                </td>
+                <td className="p-4">{o.confirmationStatus}</td>
+                <td className="p-4">{o.source}</td>
+                <td className="p-4">
+                  {new Date(o.createdAt).toLocaleString()}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        {loading ? (
+          <LoadingRows />
+        ) : !items.length ? (
+          <EmptyState text="No orders found." />
+        ) : null}
+        <Pagination page={page} pages={pages} onPage={setPage} />
+      </div>
+    </main>
+  );
 }

@@ -6,6 +6,7 @@ import {
   knowledgeBaseUpdateSchema,
   MAX_KNOWLEDGE_BASE_LENGTH,
   settingsUpdateSchema,
+  quickReplySchema,
 } from '../admin.schemas.js';
 import { isAdminPasswordValid } from '../auth/admin-password.js';
 import { KnowledgeBaseService } from '../knowledge-base.service.js';
@@ -36,6 +37,12 @@ test('settings validation accepts known values and rejects secret or unknown fie
 
   assert.equal(settingsUpdateSchema.safeParse({ geminiApiKey: 'secret' }).success, false);
   assert.equal(settingsUpdateSchema.safeParse({ deliveryChargeDhaka: '-1' }).success, false);
+});
+
+test('quick replies validate title, message and safe limits', () => {
+  assert.equal(quickReplySchema.safeParse({ title: 'Greeting', message: 'Hello', enabled: true, sortOrder: 10 }).success, true);
+  assert.equal(quickReplySchema.safeParse({ title: '', message: 'Hello' }).success, false);
+  assert.equal(quickReplySchema.safeParse({ title: 'Bad', message: 'x'.repeat(4_001) }).success, false);
 });
 
 test('admin password comparison rejects absent and incorrect credentials', () => {

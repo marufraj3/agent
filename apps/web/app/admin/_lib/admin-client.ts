@@ -33,6 +33,10 @@ export async function adminRequest<T>(
     | { error?: { message?: string } }
     | null;
   if (!response.ok) {
+    if (response.status === 401 && typeof window !== 'undefined') {
+      sessionStorage.removeItem(PASSWORD_STORAGE_KEY);
+      if (window.location.pathname !== '/admin') window.location.assign('/admin');
+    }
     throw new AdminApiError(
       payload?.error?.message ?? `Admin request failed with HTTP ${response.status}`,
       response.status,
