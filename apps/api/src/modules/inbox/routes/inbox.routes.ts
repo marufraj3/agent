@@ -6,6 +6,7 @@ import { requireAdmin } from '../../admin/auth/require-admin.js';
 import { getMessengerConfig } from '../../channels/messenger/messenger.config.js';
 import { MessengerMessageDeliveryProvider } from '../../channels/messenger/messenger.delivery.js';
 import { MessengerSender } from '../../channels/messenger/messenger.sender.js';
+import { MessengerOutgoingService } from '../../channels/messenger/messenger-outgoing.service.js';
 import { HumanHandoverService, DEFAULT_ADMIN_ACTOR } from '../../handovers/human-handover.service.js';
 import { enqueueAudioTranscription } from '../../audio/audio-transcription.queue.js';
 import { enqueueImageAnalysis } from '../../images/image-analysis.queue.js';
@@ -40,6 +41,7 @@ export async function inboxRoutes(app: FastifyInstance): Promise<void> {
     ),
     DEFAULT_ADMIN_ACTOR,
     messengerConfig.pageId,
+    new MessengerOutgoingService(app.prisma, app.messengerOutgoingQueue),
   );
   const handovers = new HumanHandoverService(app.prisma);
   const protectedRoute = { preHandler: requireAdmin };

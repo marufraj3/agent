@@ -39,19 +39,29 @@ test('normalizes unsupported attachments without crashing', () => {
   const event = new MessengerEventParser().parse(payload({ mid: 'm4', attachments: [{ type: 'file', payload: { url: 'https://cdn.example/a.pdf' } }] }), 'page-1')[0]!;
   assert.equal(event.messageType, 'unsupported'); assert.match(event.text, /Unsupported/);
 });
-test('drops echo events to prevent outbound message loops', () => {
-  assert.equal(new MessengerEventParser().parse(payload({ mid: 'm5', text: 'echo', is_echo: true }), 'page-1').length, 0);
+test('normalizes echo events for status tracking without treating them as customer input', () => {
+  assert.equal(new MessengerEventParser().parse(payload({ mid: 'm5', text: 'echo', is_echo: true }), 'page-1')[0]?.eventType, 'message_echo');
 });
-test('drops events sent by the configured Page itself', () => {
-  assert.equal(new MessengerEventParser().parse(payload({ mid: 'm6', text: 'self' }, 'page-1'), 'page-1').length, 0);
+test('normalizes events sent by the Page itself as echoes', () => {
+  assert.equal(new MessengerEventParser().parse(payload({ mid: 'm6', text: 'self' }, 'page-1'), 'page-1')[0]?.eventType, 'message_echo');
 });
-test('drops events addressed to another Page', () => {
+test('normalizes messages addressed to another recipient as echoes and never customer input', () => {
   const value = payload({ mid: 'm7', text: 'wrong' }); (value.entry[0]!.messaging[0]!.recipient as any).id = 'other';
-  assert.equal(new MessengerEventParser().parse(value, 'page-1').length, 0);
+  assert.equal(new MessengerEventParser().parse(value, 'page-1')[0]?.eventType, 'message_echo');
 });
 test('parses multiple rapid messages from one webhook batch', () => {
   const value = payload({ mid: 'm8', text: 'one' }); value.entry[0]!.messaging.push({ sender: { id: 'user-1' }, recipient: { id: 'page-1' }, timestamp: 124, message: { mid: 'm9', text: 'two' } });
   assert.deepEqual(new MessengerEventParser().parse(value, 'page-1').map((item) => item.messageId), ['m8', 'm9']);
+});
+test('normalizes delivery, read, and postback control events', () => {
+  const parser = new MessengerEventParser();
+  const base = (body: Record<string, unknown>) => ({
+    object: 'page',
+    entry: [{ id: 'page-1', messaging: [{ sender: { id: 'user-1' }, recipient: { id: 'page-1' }, timestamp: 500, ...body }] }],
+  });
+  assert.deepEqual(parser.parse(base({ delivery: { mids: ['out-1'], watermark: 500 } }))[0]?.deliveryMessageIds, ['out-1']);
+  assert.equal(parser.parse(base({ read: { watermark: 501 } }))[0]?.eventType, 'read');
+  assert.equal(parser.parse(base({ postback: { mid: 'pb-1', payload: 'CONFIRM_ORDER' } }))[0]?.text, 'CONFIRM_ORDER');
 });
 test('rejects non-Page and wrong configured Page payloads', () => {
   const parser = new MessengerEventParser(); assert.equal(parser.parse({ object: 'user', entry: [] }).length, 0); assert.equal(parser.parse(payload({ mid: 'm10', text: 'x' }), 'other-page').length, 0);
@@ -66,7 +76,7 @@ test('Messenger sender uses Graph v25.0, bearer token, and RESPONSE messaging ty
 });
 test('Messenger sender handles invalid recipients as a known failure', async () => {
   const sender = new MessengerSender(config, async () => response({ error: { code: 100, message: 'Invalid recipient' } }, 400));
-  const result = await sender.sendText('bad', 'hello'); assert.equal(result.success, false); assert.equal(result.retryable, false); assert.equal(result.errorCode, '100');
+  const result = await sender.sendText('bad', 'hello'); assert.equal(result.success, false); assert.equal(result.retryable, false); assert.equal(result.errorType, 'VALIDATION_ERROR'); assert.equal(result.errorCode, '100');
 });
 test('Messenger sender handles expired tokens without exposing tokens', async () => {
   const sender = new MessengerSender(config, async () => response({ error: { code: 190, message: 'Token expired' } }, 401));
@@ -78,7 +88,7 @@ test('Messenger sender classifies permission errors as non-retryable', async () 
 });
 test('Messenger sender classifies rate limits as retryable', async () => {
   const sender = new MessengerSender(config, async () => response({ error: { code: 4, message: 'Rate limit', is_transient: true } }, 429));
-  assert.equal((await sender.sendText('u', 'hello')).retryable, true);
+  const result = await sender.sendText('u', 'hello'); assert.equal(result.retryable, true); assert.equal(result.errorType, 'RATE_LIMIT');
 });
 test('Messenger sender classifies HTTP 5xx as retryable', async () => {
   const sender = new MessengerSender(config, async () => response({ error: { code: 2, message: 'Temporary' } }, 503));
@@ -124,7 +134,7 @@ function serviceMemory(options: { chatResult?: any; sendResult?: any; status?: s
 
 test('processor maps new and existing Messenger customers through the same ChatService input', async () => {
   const memory = serviceMemory(); await memory.service.process({ eventLogId: 'log-1', event: memory.event });
-  assert.deepEqual(memory.chatInputs[0].customer, { platform: 'messenger', platformUserId: 'psid-1' }); assert.equal(memory.chatInputs[0].channel, 'messenger');
+  assert.deepEqual(memory.chatInputs[0].customer, { platform: 'messenger', platformPageId: 'page-1', platformUserId: 'psid-1' }); assert.equal(memory.chatInputs[0].channel, 'messenger');
 });
 test('processor stores the inbound external message ID for deduplication', async () => {
   const memory = serviceMemory(); await memory.service.process({ eventLogId: 'log-1', event: memory.event });

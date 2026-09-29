@@ -2,6 +2,7 @@ import { prisma } from '@alzeena/database';
 import type { FastifyInstance } from 'fastify';
 import { createProductSyncQueue } from '../modules/products/product-sync.queue.js';
 import { createMessengerEventQueue } from '../modules/channels/messenger/messenger.queue.js';
+import { createMessengerOutgoingQueue } from '../modules/channels/messenger/messenger-outgoing.queue.js';
 import { createAudioTranscriptionQueue } from '../modules/audio/audio-transcription.queue.js';
 import { createImageAnalysisQueue } from '../modules/images/image-analysis.queue.js';
 import { createRedisConnection } from './redis.js';
@@ -11,11 +12,13 @@ export async function registerInfrastructure(app: FastifyInstance): Promise<void
   const redis = createRedisConnection();
   const productSyncQueue = createProductSyncQueue();
   const messengerEventQueue = createMessengerEventQueue();
+  const messengerOutgoingQueue = createMessengerOutgoingQueue();
   const audioTranscriptionQueue = createAudioTranscriptionQueue();
   const imageAnalysisQueue = createImageAnalysisQueue();
   const queues = createQueueRegistry({
     [queueNames.productSync]: productSyncQueue,
     [queueNames.messengerEvents]: messengerEventQueue,
+    [queueNames.messengerOutgoing]: messengerOutgoingQueue,
     [queueNames.audioTranscription]: audioTranscriptionQueue,
     [queueNames.imageAnalysis]: imageAnalysisQueue,
   });
@@ -24,6 +27,7 @@ export async function registerInfrastructure(app: FastifyInstance): Promise<void
   app.decorate('redis', redis);
   app.decorate('productSyncQueue', productSyncQueue);
   app.decorate('messengerEventQueue', messengerEventQueue);
+  app.decorate('messengerOutgoingQueue', messengerOutgoingQueue);
   app.decorate('audioTranscriptionQueue', audioTranscriptionQueue);
   app.decorate('imageAnalysisQueue', imageAnalysisQueue);
   app.decorate('queues', queues);
@@ -33,7 +37,8 @@ export async function registerInfrastructure(app: FastifyInstance): Promise<void
       prisma.$connect(),
       redis.connect(),
       productSyncQueue.setGlobalConcurrency(1),
-      messengerEventQueue.setGlobalConcurrency(1),
+      messengerEventQueue.setGlobalConcurrency(5),
+      messengerOutgoingQueue.setGlobalConcurrency(10),
       audioTranscriptionQueue.setGlobalConcurrency(3),
       imageAnalysisQueue.setGlobalConcurrency(3),
     ]);

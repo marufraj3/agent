@@ -8,6 +8,7 @@ export interface CreateCustomerInput {
   email?: string | null;
   address?: string | null;
   platform?: string | null;
+  platformPageId?: string | null;
   platformUserId?: string | null;
   language?: string | null;
   metadata?: JsonMetadata;
@@ -17,6 +18,7 @@ export interface FindCustomerInput {
   id?: string;
   externalId?: string;
   platform?: string;
+  platformPageId?: string;
   platformUserId?: string;
 }
 
@@ -34,6 +36,7 @@ function customerData(input: CreateCustomerInput) {
     email: clean(input.email)?.toLowerCase(),
     address: clean(input.address),
     platform: clean(input.platform)?.toLowerCase(),
+    platformPageId: clean(input.platformPageId),
     platformUserId: clean(input.platformUserId),
     language: clean(input.language)?.toLowerCase(),
     ...(input.metadata !== undefined ? { metadata: input.metadata } : {}),
@@ -53,7 +56,7 @@ export class CustomerService {
       return this.prisma.customer.findUnique({ where: { externalId: input.externalId } });
     }
     if (input.platform && input.platformUserId) {
-      return this.getCustomerByPlatformUserId(input.platform, input.platformUserId);
+      return this.getCustomerByPlatformUserId(input.platform, input.platformUserId, input.platformPageId);
     }
     return null;
   }
@@ -61,14 +64,16 @@ export class CustomerService {
   async findOrCreateCustomer(input: CreateCustomerInput) {
     const data = customerData(input);
     if (data.platform && data.platformUserId) {
+      const platformPageId = data.platformPageId ?? 'global';
       return this.prisma.customer.upsert({
         where: {
-          platform_platformUserId: {
+          platform_platformPageId_platformUserId: {
             platform: data.platform,
+            platformPageId,
             platformUserId: data.platformUserId,
           },
         },
-        create: data,
+        create: { ...data, platformPageId },
         update: {
           ...(data.externalId !== undefined ? { externalId: data.externalId } : {}),
           ...(data.name !== undefined ? { name: data.name } : {}),
@@ -101,11 +106,12 @@ export class CustomerService {
     return this.prisma.customer.update({ where: { id }, data: customerData(input) });
   }
 
-  getCustomerByPlatformUserId(platform: string, platformUserId: string) {
+  getCustomerByPlatformUserId(platform: string, platformUserId: string, platformPageId = 'global') {
     return this.prisma.customer.findUnique({
       where: {
-        platform_platformUserId: {
+        platform_platformPageId_platformUserId: {
           platform: platform.trim().toLowerCase(),
+          platformPageId: platformPageId.trim(),
           platformUserId: platformUserId.trim(),
         },
       },

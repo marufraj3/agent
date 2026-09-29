@@ -147,6 +147,7 @@ export class ChatService {
         conversation = await this.conversations.createConversation({
           customerId: customer.id,
           channel: input.channel,
+          platformPageId: input.customer.platformPageId,
         });
       }
     } else if (input.conversationId) {
@@ -163,6 +164,7 @@ export class ChatService {
       conversation = await this.conversations.getOrCreateConversation({
         customerId: customer.id,
         channel: input.channel,
+        platformPageId: input.customer.platformPageId,
       });
     }
 

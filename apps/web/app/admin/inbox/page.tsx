@@ -12,7 +12,10 @@ type Filter =
   | "human"
   | "closed"
   | "messenger"
-  | "web";
+  | "web"
+  | "order_pending"
+  | "order_completed"
+  | "failed";
 type QuickReply = { id: string; title: string; message: string };
 type Summary = {
   id: string;
@@ -74,6 +77,7 @@ type Detail = Omit<Summary, "customer" | "messages" | "handovers"> & {
       visionDurationMs: number | null; matchingDurationMs: number | null; aiDurationMs: number | null; totalDurationMs: number | null; retainedUntil: string | null;
     } | null;
     imageFeedback?: Array<{ id: string; type: string; aiProductId: number | null; correctedProductId: number | null }>;
+    messengerOutgoing?: { status: string; attemptCount: number; errorType: string | null; errorCode: string | null; queuedAt: string; sentAt: string | null; deliveredAt: string | null; readAt: string | null; correlationId: string } | null;
   }>;
   handovers: Array<{
     id: string;
@@ -117,6 +121,9 @@ const filters: Array<[Filter, string]> = [
   ["closed", "Closed"],
   ["messenger", "Messenger"],
   ["web", "Web"],
+  ["order_pending", "Order Pending"],
+  ["order_completed", "Order Completed"],
+  ["failed", "Failed"],
 ];
 
 export default function InboxPage() {
@@ -606,6 +613,7 @@ export default function InboxPage() {
                           <p>Cost: {typeof message.metadata.audioDebug.estimatedCost === "number" ? message.metadata.audioDebug.estimatedCost : "unknown"}</p>
                         </details>
                       ) : null}
+                      {message.messengerOutgoing ? <details className="mt-2 text-[10px] opacity-70"><summary>Messenger trace · {message.messengerOutgoing.status}</summary><p>Attempts {message.messengerOutgoing.attemptCount} · queued {new Date(message.messengerOutgoing.queuedAt).toLocaleString()}</p><p>Sent {message.messengerOutgoing.sentAt ? new Date(message.messengerOutgoing.sentAt).toLocaleString() : "—"} · delivered {message.messengerOutgoing.deliveredAt ? new Date(message.messengerOutgoing.deliveredAt).toLocaleString() : "—"} · read {message.messengerOutgoing.readAt ? new Date(message.messengerOutgoing.readAt).toLocaleString() : "—"}</p><p>Trace {message.messengerOutgoing.correlationId}{message.messengerOutgoing.errorType ? ` · ${message.messengerOutgoing.errorType}/${message.messengerOutgoing.errorCode ?? ""}` : ""}</p></details> : null}
                       <p className="mt-2 text-[10px] opacity-50">
                         {new Date(message.createdAt).toLocaleString()}
                         {message.metadata?.delivery?.status

@@ -73,8 +73,15 @@ const envSchema = z.object({
   FACEBOOK_APP_SECRET: z.preprocess((value) => value === '' ? undefined : value, z.string().min(16).optional()),
   FACEBOOK_PAGE_ID: z.preprocess((value) => value === '' ? undefined : value, z.string().min(1).optional()),
   FACEBOOK_PAGE_ACCESS_TOKEN: z.preprocess((value) => value === '' ? undefined : value, z.string().min(16).optional()),
+  META_GRAPH_API_VERSION: z.string().regex(/^v\d+\.\d+$/).optional(),
   FACEBOOK_GRAPH_API_VERSION: z.string().regex(/^v\d+\.\d+$/).default('v25.0'),
   FACEBOOK_SEND_TIMEOUT_MS: z.coerce.number().int().min(1_000).max(120_000).default(15_000),
+  APP_URL: z.url().default('http://localhost:4000'),
+  WEBHOOK_URL: z.url().optional(),
+  MESSENGER_PROVIDER: z.enum(['meta', 'mock']).default('meta'),
+  MESSENGER_CREDENTIAL_ENCRYPTION_KEY: z.preprocess((value) => value === '' ? undefined : value, z.string().min(32).optional()),
+  MESSENGER_DEBOUNCE_MS: z.coerce.number().int().min(0).max(10_000).default(1_200),
+  MESSENGER_TECHNICAL_LOG_RETENTION_DAYS: z.coerce.number().int().min(1).max(365).default(30),
   MESSENGER_WEBHOOK_RATE_LIMIT_PER_MINUTE: z.coerce.number().int().min(10).max(10_000).default(1_000),
   WEBSITE_API_BASE_URL: z.url().default('https://sells.alzeena.com.bd/public/api'),
   PRODUCT_FEED_TIMEOUT_MS: z.coerce.number().int().min(1_000).max(120_000).default(30_000),
@@ -87,8 +94,11 @@ const envSchema = z.object({
   if (values.NODE_ENV === 'production' && !values.ADMIN_PASSWORD) {
     context.addIssue({ code: 'custom', path: ['ADMIN_PASSWORD'], message: 'ADMIN_PASSWORD is required in production' });
   }
-  if (values.NODE_ENV === 'production' && !values.FRONTEND_URL.startsWith('https://')) {
-    context.addIssue({ code: 'custom', path: ['FRONTEND_URL'], message: 'FRONTEND_URL must use HTTPS in production' });
+  if (values.NODE_ENV === 'production' && (!values.FRONTEND_URL.startsWith('https://') || !values.APP_URL.startsWith('https://'))) {
+    context.addIssue({ code: 'custom', path: ['APP_URL'], message: 'APP_URL and FRONTEND_URL must use HTTPS in production' });
+  }
+  if (values.NODE_ENV === 'production' && values.MESSENGER_PROVIDER === 'mock') {
+    context.addIssue({ code: 'custom', path: ['MESSENGER_PROVIDER'], message: 'Mock Messenger provider is forbidden in production' });
   }
   const facebook = [values.FACEBOOK_APP_SECRET, values.FACEBOOK_PAGE_ID, values.FACEBOOK_PAGE_ACCESS_TOKEN, values.FACEBOOK_VERIFY_TOKEN];
   if (facebook.some(Boolean) && !facebook.every(Boolean)) {

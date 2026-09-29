@@ -4,6 +4,7 @@ import type { Logger } from 'pino';
 import type { ChatService } from '../conversations/chat.service.js';
 import { MessageService } from '../conversations/message.service.js';
 import type { MessengerSender } from '../channels/messenger/messenger.sender.js';
+import type { MessengerOutgoingService } from '../channels/messenger/messenger-outgoing.service.js';
 import { HumanHandoverService } from '../handovers/human-handover.service.js';
 import { AudioFetchError } from './audio.service.js';
 import { AudioValidationError } from './audio-validation.service.js';
@@ -41,6 +42,7 @@ export class AudioTranscriptionProcessor {
     private readonly model: string,
     private readonly retentionHours: number,
     private readonly debounceMs: number,
+    private readonly outgoing?: MessengerOutgoingService,
   ) {
     this.db = prisma as any;
     this.messages = new MessageService(prisma);
@@ -52,6 +54,14 @@ export class AudioTranscriptionProcessor {
       where: { messageId: data.messageId }, include: { message: true },
     });
     if (!lifecycle || lifecycle.status === 'EXPIRED' || (lifecycle.aiProcessedAt && !data.retranscribeOnly)) return { duplicate: true };
+    const [emergency, page] = await Promise.all([
+      this.db.setting?.findUnique ? this.db.setting.findUnique({ where: { key: 'messenger.emergency_stop' } }) : null,
+      this.db.messengerPage?.findUnique ? this.db.messengerPage.findUnique({ where: { pageId: lifecycle.message.metadata?.pageId } }) : null,
+    ]);
+    if (emergency?.value === 'true' || page?.aiEnabled === false) {
+      await this.db.messengerEventLog.update({ where: { id: data.eventLogId }, data: { status: 'IGNORED', processedAt: new Date(), processingCompletedAt: new Date(), errorType: emergency?.value === 'true' ? 'EMERGENCY_STOP' : 'AI_DISABLED' } });
+      return { ignored: true };
+    }
     if (['FAILED', 'UNSUPPORTED'].includes(lifecycle.status) && !data.retranscribeOnly) {
       const eventLog = await this.db.messengerEventLog.findUnique({ where: { id: data.eventLogId } });
       return eventLog?.localOutboundMessageId ? this.retryDelivery(eventLog, data.senderId) : { duplicate: true };
@@ -144,7 +154,7 @@ export class AudioTranscriptionProcessor {
     const eventLog = await this.db.messengerEventLog.findUnique({ where: { id: data.eventLogId } });
     if (eventLog?.localOutboundMessageId && eventLog.status === 'PROCESSED') return { duplicate: true };
     if (eventLog?.localOutboundMessageId) return this.retryDelivery(eventLog, data.senderId);
-    const lockKey = `conversation:processing:messenger:${data.senderId}`;
+    const lockKey = `conversation:processing:messenger:${eventLog?.pageId ?? 'unknown'}:${data.senderId}`;
     const token = `${data.eventLogId}:${Date.now()}`;
     const locked = await this.redis.set(lockKey, token, 'PX', 90_000, 'NX');
     if (!locked) throw new Error('Audio batch is already processing');
@@ -165,7 +175,7 @@ export class AudioTranscriptionProcessor {
       const duration = knownDurations.length === records.length ? knownDurations.reduce((sum: number, value: number) => sum + value, 0) : null;
       const aiStarted = Date.now();
       const result = await this.chat.send({
-        customer: { platform: 'messenger', platformUserId: data.senderId }, channel: 'messenger',
+        customer: { platform: 'messenger', platformPageId: records[0]?.message.metadata?.pageId, platformUserId: data.senderId }, channel: 'messenger',
         conversationId: data.conversationId, existingMessageId: latest.messageId,
         message: combined,
         audioTranscription: { text: combined, language: mergedLanguage, confidence: null, duration },
@@ -276,8 +286,15 @@ export class AudioTranscriptionProcessor {
   }
 
   private async deliver(records: any[], outboundId: string, senderId: string, text: string) {
-    const result = await this.sender.sendText(senderId, text);
     const externalIds = records.map((record) => record.message.externalMessageId).filter(Boolean);
+    const eventLog = await this.db.messengerEventLog.findFirst({ where: { externalMessageId: { in: externalIds } }, orderBy: { receivedAt: 'asc' } });
+    const outbound = await this.db.message.findUnique({ where: { id: outboundId } });
+    if (this.outgoing && eventLog && outbound) {
+      await this.outgoing.enqueue({ messageId: outboundId, conversationId: outbound.conversationId, eventLogId: eventLog.id, pageId: eventLog.pageId, recipientId: senderId, correlationId: eventLog.correlationId ?? eventLog.id });
+      await this.db.messengerEventLog.updateMany({ where: { externalMessageId: { in: externalIds }, id: { not: eventLog.id } }, data: { status: 'IGNORED', processedAt: new Date(), processingCompletedAt: new Date(), errorType: 'BATCHED' } });
+      return { queued: true };
+    }
+    const result = await this.sender.sendText(senderId, text);
     await this.db.messengerEventLog.updateMany({
       where: { externalMessageId: { in: externalIds } },
       data: result.success
@@ -298,6 +315,10 @@ export class AudioTranscriptionProcessor {
       if (fresh?.status === 'PROCESSED') return { duplicate: true };
       const outbound = await this.db.message.findUnique({ where: { id: eventLog.localOutboundMessageId } });
       if (!outbound) throw new PermanentAudioError('OUTBOUND_MISSING');
+      if (this.outgoing) {
+        await this.outgoing.enqueue({ messageId: outbound.id, conversationId: outbound.conversationId, eventLogId: eventLog.id, pageId: eventLog.pageId, recipientId: senderId, correlationId: eventLog.correlationId ?? eventLog.id });
+        return { queued: true };
+      }
       const result = await this.sender.sendText(senderId, outbound.content);
       await this.db.messengerEventLog.updateMany({ where: { localOutboundMessageId: eventLog.localOutboundMessageId }, data: result.success ? { status: 'PROCESSED', processedAt: new Date(), errorMessage: null } : { status: result.retryable ? 'DELIVERY_FAILED' : 'FAILED', processedAt: result.retryable ? null : new Date(), errorMessage: 'Delivery failed' } });
       if (!result.success && result.retryable) throw new Error('Temporary Messenger delivery failure');

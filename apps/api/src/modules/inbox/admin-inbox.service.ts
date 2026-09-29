@@ -3,8 +3,9 @@ import { HumanHandoverService, DEFAULT_ADMIN_ACTOR } from '../handovers/human-ha
 import type { HandoverReasonName } from '../handovers/handover.types.js';
 import { resolveEffectivePrice } from '../products/effective-price.js';
 import { MessageDeliveryService } from './message-delivery.service.js';
+import type { MessengerOutgoingService } from '../channels/messenger/messenger-outgoing.service.js';
 
-export type InboxFilter = 'all' | 'unread' | 'ai' | 'human' | 'closed' | 'messenger' | 'web' | 'pending' | 'mine' | 'active';
+export type InboxFilter = 'all' | 'unread' | 'ai' | 'human' | 'closed' | 'messenger' | 'web' | 'pending' | 'mine' | 'active' | 'order_pending' | 'order_completed' | 'failed';
 
 export interface InboxQuery {
   page: number;
@@ -29,6 +30,7 @@ export class AdminInboxService {
     private readonly delivery = new MessageDeliveryService(),
     private readonly actorId = DEFAULT_ADMIN_ACTOR,
     private readonly messengerPageId?: string,
+    private readonly messengerOutgoing?: MessengerOutgoingService,
   ) {
     this.db = prisma as any;
     this.handovers = new HumanHandoverService(prisma);
@@ -59,12 +61,19 @@ export class AdminInboxService {
                   ? { status: 'HUMAN', assignedTo: null }
                   : query.filter === 'mine'
                     ? { status: 'HUMAN', assignedTo: this.actorId }
-                    : {};
+                    : query.filter === 'order_pending'
+                      ? { orders: { some: { status: { in: ['DRAFT','AWAITING_INFORMATION','AWAITING_CONFIRMATION','CONFIRMED'] } } } }
+                      : query.filter === 'order_completed'
+                        ? { orders: { some: { status: { in: ['SUBMITTED','COMPLETED'] } } } }
+                        : query.filter === 'failed'
+                          ? { OR: [{ consecutiveAiFailures: { gt: 0 } }, { messengerOutgoing: { some: { status: { in: ['FAILED','PERMANENT_FAILURE'] } } } }] }
+                          : {};
     const searchFilter = search ? {
       OR: [
         { id: this.uuid(search) ? search : undefined },
         { customer: { is: { name: { contains: search, mode: 'insensitive' } } } },
         { customer: { is: { phone: { contains: search } } } },
+        { customer: { is: { platformUserId: { contains: search } } } },
         { messages: { some: { content: { contains: search, mode: 'insensitive' } } } },
         ...(matchingProductIds.length > 0
           ? [{ messages: { some: { OR: matchingProductIds.map((id) => ({
@@ -119,6 +128,7 @@ export class AdminInboxService {
               matchingDurationMs: true, aiDurationMs: true, totalDurationMs: true, retainedUntil: true,
             } },
             imageFeedback: { orderBy: { createdAt: 'desc' }, take: 10 },
+            messengerOutgoing: { select: { status: true, providerMessageId: true, attemptCount: true, errorType: true, errorCode: true, queuedAt: true, sendingStartedAt: true, sentAt: true, deliveredAt: true, readAt: true, failedAt: true, correlationId: true } },
           },
         },
         handovers: { orderBy: { createdAt: 'desc' }, take: 20 },
@@ -188,6 +198,13 @@ export class AdminInboxService {
       });
       return message;
     });
+    if (conversation.channel === 'MESSENGER' && this.messengerOutgoing && conversation.customer.platformUserId) {
+      const pageId = conversation.platformPageId ?? conversation.customer.platformPageId ?? this.messengerPageId;
+      if (!pageId) throw new InboxError('Messenger Page is unavailable', 'MESSENGER_PAGE_MISSING', 409);
+      await this.messengerOutgoing.enqueue({ messageId: pending.id, conversationId, pageId, recipientId: conversation.customer.platformUserId, correlationId: `admin:${pending.id}`, priority: 'HIGH' });
+      await this.log(this.db, 'ADMIN_HUMAN_REPLY_QUEUED', conversationId, { messageId: pending.id, actorId: this.actorId });
+      return this.db.message.update({ where: { id: pending.id }, data: { metadata: { delivery: { status: 'queued', provider: 'facebook-messenger' } } } });
+    }
     const delivery = await this.delivery.sendMessage({
       conversationId,
       channel: conversation.channel,
@@ -224,12 +241,17 @@ export class AdminInboxService {
     });
   }
 
-  take(conversationId: string) { return this.handovers.assignConversation(conversationId, this.actorId); }
+  async take(conversationId: string) {
+    const result = await this.handovers.assignConversation(conversationId, this.actorId);
+    await this.db.messengerOutgoingMessage.updateMany({ where: { conversationId, status: { in: ['QUEUED','SENDING'] } }, data: { status: 'CANCELLED', errorType: 'HUMAN_TAKEOVER', errorMessage: 'Cancelled because an admin took over', failedAt: new Date() } });
+    return result;
+  }
   release(conversationId: string) { return this.handovers.unassignConversation(conversationId); }
   requestHandover(conversationId: string, reason: HandoverReasonName, note?: string | null) {
     return this.handovers.requestHandover({ conversationId, reason, note, createdBy: this.actorId });
   }
-  returnToAi(conversationId: string, note?: string | null) {
+  async returnToAi(conversationId: string, note?: string | null) {
+    await this.db.messengerOutgoingMessage.updateMany({ where: { conversationId, status: { in: ['QUEUED','SENDING'] } }, data: { status: 'CANCELLED', errorType: 'RETURN_TO_AI', errorMessage: 'Old queued response cancelled before AI resumed', failedAt: new Date() } });
     return this.handovers.resolveConversation(conversationId, this.actorId, note, true);
   }
 

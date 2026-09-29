@@ -4,7 +4,7 @@ import { handoverReasons } from '../handovers/handover.types.js';
 export const inboxQuerySchema = z.object({
   page: z.coerce.number().int().min(1).default(1),
   limit: z.coerce.number().int().min(1).max(100).optional(),
-  filter: z.enum(['all', 'unread', 'ai', 'human', 'closed', 'messenger', 'web', 'pending', 'mine', 'active']).default('all'),
+  filter: z.enum(['all', 'unread', 'ai', 'human', 'closed', 'messenger', 'web', 'pending', 'mine', 'active', 'order_pending', 'order_completed', 'failed']).default('all'),
   search: z.string().trim().max(200).optional(),
 }).strict();
 

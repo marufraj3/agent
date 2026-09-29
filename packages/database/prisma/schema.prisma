@@ -248,6 +248,7 @@ model Customer {
   email          String?        @db.VarChar(320)
   address        String?        @db.Text
   platform       String?        @db.VarChar(50)
+  platformPageId String         @default("global") @map("platform_page_id") @db.VarChar(100)
   platformUserId String?        @map("platform_user_id") @db.VarChar(255)
   language       String?        @db.VarChar(20)
   metadata              Json?                @db.JsonB
@@ -268,8 +269,9 @@ model Customer {
   activities            CustomerActivity[]
   followUps             FollowUp[]
 
-  @@unique([platform, platformUserId])
-  @@index([platformUserId])
+  @@unique([platform, platformPageId, platformUserId])
+  @@index([platform, platformUserId])
+  @@index([platformPageId, platformUserId])
   @@index([createdAt])
   @@index([journeyState, lastActivityAt])
   @@map("customers")
@@ -337,6 +339,7 @@ model Conversation {
   id            String             @id @default(uuid()) @db.Uuid
   customerId    String             @map("customer_id") @db.Uuid
   channel       ConversationChannel
+  platformPageId String?            @map("platform_page_id") @db.VarChar(100)
   status        ConversationStatus @default(ACTIVE)
   title                 String?            @db.VarChar(255)
   assignedTo            String?            @map("assigned_to") @db.VarChar(100)
@@ -355,11 +358,12 @@ model Conversation {
   notifications AdminNotification[]
   activities    CustomerActivity[]
   followUps     FollowUp[]
+  messengerOutgoing MessengerOutgoingMessage[]
 
   @@index([customerId, status, lastMessageAt])
   @@index([status, assignedTo, lastMessageAt])
   @@index([unreadForAdmin, lastMessageAt])
-  @@index([channel, status, lastMessageAt])
+  @@index([channel, platformPageId, status, lastMessageAt])
   @@index([salesState, lastMessageAt])
   @@index([lastMessageAt])
   @@map("conversations")
@@ -380,6 +384,7 @@ model Message {
   audioTranscription AudioTranscription?
   imageProcessing   ImageProcessing?
   imageFeedback     ImageMatchFeedback[]
+  messengerOutgoing MessengerOutgoingMessage?
 
   @@index([conversationId, createdAt])
   @@index([customerId, createdAt])
@@ -557,6 +562,98 @@ model AdminNotification {
   @@map("admin_notifications")
 }
 
+enum MessengerConnectionStatus {
+  CONNECTED
+  CONNECTION_ERROR
+  DISABLED
+}
+
+model MessengerPage {
+  id                    String                    @id @default(uuid()) @db.Uuid
+  pageId                String                    @unique @map("page_id") @db.VarChar(100)
+  pageName              String?                   @map("page_name") @db.VarChar(255)
+  encryptedAccessToken  String?                   @map("encrypted_access_token") @db.Text
+  tokenHint             String?                   @map("token_hint") @db.VarChar(40)
+  connectionStatus      MessengerConnectionStatus @default(DISABLED) @map("connection_status")
+  aiEnabled             Boolean                   @default(true) @map("ai_enabled")
+  aiConfig              Json?                     @map("ai_config") @db.JsonB
+  knowledgeBaseScope    String?                   @map("knowledge_base_scope") @db.VarChar(100)
+  testMode              Boolean                   @default(false) @map("test_mode")
+  testRecipientId       String?                   @map("test_recipient_id") @db.VarChar(255)
+  lastTokenCheckedAt    DateTime?                 @map("last_token_checked_at")
+  lastWebhookAt         DateTime?                 @map("last_webhook_at")
+  lastSuccessfulSendAt  DateTime?                 @map("last_successful_send_at")
+  lastApiErrorAt        DateTime?                 @map("last_api_error_at")
+  lastApiError           String?                   @map("last_api_error") @db.VarChar(500)
+  createdAt             DateTime                  @default(now()) @map("created_at")
+  updatedAt             DateTime                  @updatedAt @map("updated_at")
+
+  @@index([connectionStatus, updatedAt])
+  @@map("messenger_pages")
+}
+
+enum MessengerOutgoingStatus {
+  QUEUED
+  SENDING
+  SENT
+  DELIVERED
+  READ
+  FAILED
+  PERMANENT_FAILURE
+  CANCELLED
+}
+
+model MessengerOutgoingMessage {
+  id                 String                  @id @default(uuid()) @db.Uuid
+  idempotencyKey     String                  @unique @map("idempotency_key") @db.VarChar(255)
+  messageId          String                  @unique @map("message_id") @db.Uuid
+  conversationId     String                  @map("conversation_id") @db.Uuid
+  sourceEventLogId   String?                 @map("source_event_log_id") @db.Uuid
+  pageId             String                  @map("page_id") @db.VarChar(100)
+  recipientId        String                  @map("recipient_id") @db.VarChar(255)
+  correlationId      String                  @map("correlation_id") @db.VarChar(128)
+  status             MessengerOutgoingStatus @default(QUEUED)
+  providerMessageId  String?                 @unique @map("provider_message_id") @db.VarChar(255)
+  attemptCount       Int                     @default(0) @map("attempt_count")
+  errorType          String?                 @map("error_type") @db.VarChar(100)
+  errorCode          String?                 @map("error_code") @db.VarChar(100)
+  errorMessage       String?                 @map("error_message") @db.VarChar(500)
+  queuedAt           DateTime                @default(now()) @map("queued_at")
+  sendingStartedAt   DateTime?               @map("sending_started_at")
+  sentAt             DateTime?               @map("sent_at")
+  deliveredAt        DateTime?               @map("delivered_at")
+  readAt             DateTime?               @map("read_at")
+  failedAt           DateTime?               @map("failed_at")
+  createdAt          DateTime                @default(now()) @map("created_at")
+  updatedAt          DateTime                @updatedAt @map("updated_at")
+  message            Message                 @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  conversation       Conversation            @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  @@index([status, queuedAt])
+  @@index([pageId, status, queuedAt])
+  @@index([conversationId, createdAt])
+  @@index([sourceEventLogId])
+  @@index([correlationId])
+  @@map("messenger_outgoing_messages")
+}
+
+model MessengerAlert {
+  id             String   @id @default(uuid()) @db.Uuid
+  pageId         String?  @map("page_id") @db.VarChar(100)
+  conversationId String?  @map("conversation_id") @db.Uuid
+  messageId      String?  @map("message_id") @db.Uuid
+  type           String   @db.VarChar(100)
+  severity       String   @default("ERROR") @db.VarChar(20)
+  message        String   @db.VarChar(500)
+  metadata       Json?    @db.JsonB
+  resolvedAt     DateTime? @map("resolved_at")
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  @@index([resolvedAt, createdAt])
+  @@index([pageId, createdAt])
+  @@map("messenger_alerts")
+}
+
 enum MessengerEventStatus {
   RECEIVED        @map("received")
   QUEUED          @map("queued")
@@ -577,12 +674,21 @@ model MessengerEventLog {
   status                 MessengerEventStatus @default(RECEIVED)
   localOutboundMessageId String?              @map("local_outbound_message_id") @db.Uuid
   errorMessage           String?              @map("error_message") @db.VarChar(500)
+  errorType              String?              @map("error_type") @db.VarChar(100)
+  correlationId          String?              @map("correlation_id") @db.VarChar(128)
+  sanitizedPayload       Json?                @map("sanitized_payload") @db.JsonB
+  retryCount             Int                  @default(0) @map("retry_count")
   receivedAt             DateTime             @default(now()) @map("received_at")
+  queuedAt               DateTime?            @map("queued_at")
+  processingStartedAt    DateTime?            @map("processing_started_at")
+  processingCompletedAt  DateTime?            @map("processing_completed_at")
+  responseQueuedAt       DateTime?            @map("response_queued_at")
   processedAt            DateTime?            @map("processed_at")
 
   @@index([status, receivedAt])
   @@index([pageId, receivedAt])
-  @@index([externalMessageId])
+  @@index([pageId, externalMessageId])
+  @@index([correlationId])
   @@map("messenger_event_logs")
 }
 

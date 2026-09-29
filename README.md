@@ -591,7 +591,10 @@ Run the compiled backend with `npm run start --workspace=@alzeena/api`. Run the 
 | `FACEBOOK_PAGE_ACCESS_TOKEN` | Server-only Page token for Messenger Send API | Used |
 | `FACEBOOK_APP_SECRET`, `FACEBOOK_VERIFY_TOKEN` | Webhook signature and verification secrets | Used |
 | `FACEBOOK_APP_ID`, `FACEBOOK_PAGE_ID` | Meta application/Page identifiers | Used |
-| `FACEBOOK_GRAPH_API_VERSION`, `FACEBOOK_SEND_TIMEOUT_MS` | Graph version and outbound timeout | Used |
+| `META_GRAPH_API_VERSION`, `FACEBOOK_SEND_TIMEOUT_MS` | Central Graph version and outbound timeout | Used |
+| `APP_URL`, `WEBHOOK_URL` | Environment-specific application and public webhook URLs | Used |
+| `MESSENGER_PROVIDER`, `MESSENGER_CREDENTIAL_ENCRYPTION_KEY` | Meta/mock provider and optional encrypted per-page credential storage | Used |
+| `MESSENGER_DEBOUNCE_MS`, `MESSENGER_TECHNICAL_LOG_RETENTION_DAYS` | Text burst window and technical-log retention | Used |
 | `MESSENGER_WEBHOOK_RATE_LIMIT_PER_MINUTE` | Signed webhook IP safety limit | Used |
 | `WEBSITE_API_BASE_URL` | Alzeena website API base URL | Used by worker |
 | `PRODUCT_FEED_TIMEOUT_MS` | Per-request feed timeout | Used by worker |
@@ -620,6 +623,7 @@ Run workers separately from the API:
 ```bash
 npm run start:worker --workspace=@alzeena/api
 npm run start:messenger-worker --workspace=@alzeena/api
+npm run start:messenger-send-worker --workspace=@alzeena/api
 npm run start:audio-worker --workspace=@alzeena/api
 npm run start:image-worker --workspace=@alzeena/api
 npm run start:followup-worker --workspace=@alzeena/api
@@ -685,3 +689,13 @@ Messenger image webhooks persist an ordinary image `Message` plus a linked `Imag
 Structured extraction supports screenshots, product names/codes, nullable OCR confidence, visual attributes, size charts, and numbered multi-product images. `ImageProductMatcher` currently uses exact code/name and attribute scoring with a configurable candidate limit; it is replaceable by a future embedding-backed matcher without deploying vector infrastructure now. Medium/low matches clarify instead of guessing. Image/OCR text is explicitly untrusted and cannot override system rules.
 
 Images are not stored as database BLOBs. Messenger buffers bypass the URL cache, temporary data is released after processing, and provider URLs are removed by default or retained briefly with `IMAGE_RETENTION_HOURS`. Admin Inbox exposes preview, extraction, candidates, selected match, timings, re-analysis, manual correction, and feedback history. Apply `20260930043000_image_product_understanding` and run `start:image-worker` before enabling queued image handling.
+
+## Step 18 production Messenger pipeline
+
+The production path is signature verification → event/message deduplication → fast queue acknowledgement → modality worker/unified `ChatService` → `messenger-outgoing` → `MessengerSendWorker` → `MetaGraphClient`. Text burst jobs use `MESSENGER_DEBOUNCE_MS`; image and audio retain their dedicated queues. Incoming and outgoing work uses page-aware, TTL-backed conversation locks. Every outgoing response has a database idempotency key and is checked for a newer customer message, human takeover, page AI status, and emergency stop before sending. Delivery, read, echo, and postback webhooks are normalized separately and never become duplicate customer messages.
+
+Page tokens may remain environment-only or be stored encrypted with AES-256-GCM when `MESSENGER_CREDENTIAL_ENCRYPTION_KEY` is configured. Admin APIs return only a masked token hint. `META_GRAPH_API_VERSION` controls all Graph requests through `MetaGraphClient`; production forbids the mock provider. Apply `20260930120000_production_messenger` and run both `start:messenger-worker` and `start:messenger-send-worker`.
+
+For local webhook testing, set `APP_URL` and optionally `WEBHOOK_URL` to an HTTPS tunnel (for example Cloudflare Tunnel or ngrok) ending at `/api/webhooks/facebook`; never hardcode the tunnel hostname. Use a development Meta app/page and token, or `MESSENGER_PROVIDER=mock`. Do not load production tokens in development. Production configuration requires HTTPS, valid webhook verification/signature secrets, authenticated admin routes, secret redaction, and a non-mock provider.
+
+Admin operations include page AI enable/disable, global emergency stop, failed-send review/retry/cancel, sanitized webhook events, correlation traces, and `/admin/system/messenger-health`. Incoming customer messages are retained when AI is paused. Technical processed/ignored webhook logs are cleaned according to `MESSENGER_TECHNICAL_LOG_RETENTION_DAYS`; customer conversations and orders are not deleted by this policy.

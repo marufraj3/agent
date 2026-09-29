@@ -19,6 +19,7 @@
     "dev:api": "npm run build --workspace=@alzeena/database && npm run dev --workspace=@alzeena/api",
     "dev:worker": "npm run build --workspace=@alzeena/database && npm run dev:worker --workspace=@alzeena/api",
     "dev:messenger-worker": "npm run build --workspace=@alzeena/database && npm run dev:messenger-worker --workspace=@alzeena/api",
+    "dev:messenger-send-worker": "npm run build --workspace=@alzeena/database && npm run dev:messenger-send-worker --workspace=@alzeena/api",
     "dev:followup-worker": "npm run build --workspace=@alzeena/database && npm run dev:followup-worker --workspace=@alzeena/api",
     "dev:audio-worker": "npm run build --workspace=@alzeena/database && npm run dev:audio-worker --workspace=@alzeena/api",
     "dev:image-worker": "npm run build --workspace=@alzeena/database && npm run dev:image-worker --workspace=@alzeena/api",

@@ -4,6 +4,7 @@ import type { Logger } from 'pino';
 import type { ChatService } from '../conversations/chat.service.js';
 import { MessageService } from '../conversations/message.service.js';
 import type { MessengerSender } from '../channels/messenger/messenger.sender.js';
+import type { MessengerOutgoingService } from '../channels/messenger/messenger-outgoing.service.js';
 import { ImageFetchError } from './image.service.js';
 import { ImageValidationError } from './image-validation.service.js';
 import type { ImageProductService } from './image-product.service.js';
@@ -31,11 +32,20 @@ export class ImageAnalysisProcessor {
     private readonly redis: Redis,
     private readonly logger: Logger,
     private readonly retentionHours: number,
+    private readonly outgoing?: MessengerOutgoingService,
   ) { this.db = prisma as any; this.messages = new MessageService(prisma); }
 
   async process(data: ImageAnalysisJobData, attempt: number, maxAttempts: number) {
     const lifecycle = await this.db.imageProcessing.findUnique({ where: { messageId: data.messageId }, include: { message: true } });
     if (!lifecycle || lifecycle.status === 'EXPIRED') return { duplicate: true };
+    const [emergency, page] = await Promise.all([
+      this.db.setting?.findUnique ? this.db.setting.findUnique({ where: { key: 'messenger.emergency_stop' } }) : null,
+      this.db.messengerPage?.findUnique ? this.db.messengerPage.findUnique({ where: { pageId: lifecycle.message.metadata?.pageId } }) : null,
+    ]);
+    if (emergency?.value === 'true' || page?.aiEnabled === false) {
+      await this.db.messengerEventLog.update({ where: { id: data.eventLogId }, data: { status: 'IGNORED', processedAt: new Date(), processingCompletedAt: new Date(), errorType: emergency?.value === 'true' ? 'EMERGENCY_STOP' : 'AI_DISABLED' } });
+      return { ignored: true };
+    }
     if (lifecycle.aiProcessedAt && !data.reanalyzeOnly) {
       const log = await this.db.messengerEventLog.findUnique({ where: { id: data.eventLogId } });
       return log?.localOutboundMessageId && log.status !== 'PROCESSED' ? this.retryDelivery(log, data.senderId) : { duplicate: true };
@@ -137,7 +147,7 @@ export class ImageAnalysisProcessor {
     const log = await this.db.messengerEventLog.findUnique({ where: { id: data.eventLogId } });
     if (log?.localOutboundMessageId && log.status === 'PROCESSED') return { duplicate: true };
     if (log?.localOutboundMessageId) return this.retryDelivery(log, data.senderId);
-    const lockKey = `conversation:processing:messenger:${data.senderId}`; const token = `${data.eventLogId}:${Date.now()}`;
+    const lockKey = `conversation:processing:messenger:${lifecycle.message.metadata?.pageId ?? 'unknown'}:${data.senderId}`; const token = `${data.eventLogId}:${Date.now()}`;
     const locked = await this.redis.set(lockKey, token, 'PX', 90_000, 'NX');
     if (!locked) throw new Error('Conversation is already processing another input');
     try {
@@ -145,10 +155,10 @@ export class ImageAnalysisProcessor {
       const caption = lifecycle.message.content === '[Product image]' ? '' : lifecycle.message.content;
       const aiStarted = Date.now();
       const result = await this.chat.send({
-        customer: { platform: 'messenger', platformUserId: data.senderId }, channel: 'messenger',
+        customer: { platform: 'messenger', platformPageId: lifecycle.message.metadata?.pageId, platformUserId: data.senderId }, channel: 'messenger',
         conversationId: lifecycle.message.conversationId, existingMessageId: lifecycle.messageId,
         message: caption || 'এই ছবির প্রোডাক্ট সম্পর্কে তথ্য দিন', imageRecognition: fresh,
-        sourceMetadata: { inputType: 'image', imageProcessingId: lifecycle.id },
+        sourceMetadata: { inputType: 'image', imageProcessingId: lifecycle.id, correlationId: log?.correlationId ?? data.eventLogId, requestId: log?.correlationId ?? data.requestId ?? data.eventLogId },
       });
       const aiDurationMs = Date.now() - aiStarted;
       if (!result.reply || !('assistantMessageId' in result) || !result.assistantMessageId) {
@@ -202,8 +212,14 @@ export class ImageAnalysisProcessor {
   }
 
   private async deliver(eventLogId: string, messageId: string, senderId: string, text: string) {
-    const result = await this.sender.sendText(senderId, text);
     const message = await this.db.message.findUnique({ where: { id: messageId } });
+    const eventLog = await this.db.messengerEventLog.findUnique({ where: { id: eventLogId } });
+    if (this.outgoing && message && eventLog) {
+      await this.outgoing.enqueue({ messageId, conversationId: message.conversationId, eventLogId, pageId: eventLog.pageId, recipientId: senderId, correlationId: eventLog.correlationId ?? eventLogId });
+      await this.db.message.update({ where: { id: messageId }, data: { metadata: this.mergeMetadata(message.metadata, { platform: 'messenger', direction: 'outbound', delivery: { status: 'queued', provider: 'facebook-messenger', correlationId: eventLog.correlationId ?? eventLogId } }) } });
+      return { queued: true };
+    }
+    const result = await this.sender.sendText(senderId, text);
     await this.db.message.update({ where: { id: messageId }, data: {
       metadata: this.mergeMetadata(message?.metadata, { platform: 'messenger', direction: 'outbound', delivery: { status: result.success ? 'sent' : 'failed', provider: 'facebook-messenger', errorCode: result.errorCode } }),
       ...(result.externalMessageId ? { externalMessageId: result.externalMessageId } : {}),

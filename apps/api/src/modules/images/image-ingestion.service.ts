@@ -25,8 +25,8 @@ export class ImageIngestionService {
       }
       return { messageId: existing.id, conversationId: existing.conversationId, customerId: existing.customerId };
     }
-    const customer = await this.customers.findOrCreateCustomer({ platform: 'messenger', platformUserId: event.senderId });
-    const conversation = await this.conversations.getOrCreateConversation({ customerId: customer.id, channel: 'messenger' });
+    const customer = await this.customers.findOrCreateCustomer({ platform: 'messenger', platformPageId: event.pageId, platformUserId: event.senderId });
+    const conversation = await this.conversations.getOrCreateConversation({ customerId: customer.id, channel: 'messenger', platformPageId: event.pageId });
     const caption = event.text.trim();
     const metadata = {
       platform: 'messenger', direction: 'inbound', pageId: event.pageId, senderId: event.senderId,

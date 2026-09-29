@@ -17,7 +17,7 @@ export function getMessengerConfig(): MessengerConfig {
     verifyToken: env.FACEBOOK_VERIFY_TOKEN,
     pageId: env.FACEBOOK_PAGE_ID,
     pageAccessToken: env.FACEBOOK_PAGE_ACCESS_TOKEN,
-    graphApiVersion: env.FACEBOOK_GRAPH_API_VERSION,
+    graphApiVersion: env.META_GRAPH_API_VERSION ?? env.FACEBOOK_GRAPH_API_VERSION,
     timeoutMs: env.FACEBOOK_SEND_TIMEOUT_MS,
   };
 }

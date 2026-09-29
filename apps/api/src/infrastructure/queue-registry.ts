@@ -4,6 +4,7 @@ import { createQueue, queueRetryPolicy } from './queue.js';
 export const queueNames = {
   productSync: 'product-sync',
   messengerEvents: 'messenger-events',
+  messengerOutgoing: 'messenger-outgoing',
   aiProcessing: 'ai-processing',
   orderProcessing: 'order-processing',
   notifications: 'notifications',

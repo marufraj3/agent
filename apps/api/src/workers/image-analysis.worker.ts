@@ -9,14 +9,16 @@ import { getMessengerConfig } from '../modules/channels/messenger/messenger.conf
 import { MessengerSender } from '../modules/channels/messenger/messenger.sender.js';
 import { createChatService } from '../modules/conversations/chat.factory.js';
 import { ImageAnalysisProcessor, PermanentImageError } from '../modules/images/image-analysis.processor.js';
+import { createMessengerOutgoingQueue } from '../modules/channels/messenger/messenger-outgoing.queue.js';
+import { MessengerOutgoingService } from '../modules/channels/messenger/messenger-outgoing.service.js';
 import { IMAGE_ANALYSIS_JOB_NAME, IMAGE_ANALYSIS_QUEUE_NAME, IMAGE_EXPIRY_JOB_NAME, createImageAnalysisQueue, type ImageAnalysisJobData } from '../modules/images/image-analysis.queue.js';
 import { createImageProductService } from '../modules/images/image.factory.js';
 
 const logger = pino({ level: env.LOG_LEVEL, redact: ['*.providerUrl', '*.url', '*.image', '*.ocr', '*.GEMINI_API_KEY', '*.FACEBOOK_PAGE_ACCESS_TOKEN', '*.FACEBOOK_APP_SECRET'] });
-const connection = createRedisConnection(); const queue = createImageAnalysisQueue(); const followUpQueue = createFollowUpQueue();
+const connection = createRedisConnection(); const queue = createImageAnalysisQueue(); const followUpQueue = createFollowUpQueue(); const outgoingQueue = createMessengerOutgoingQueue();
 await prisma.$connect();
 const stopHeartbeat = startWorkerHeartbeat(connection, IMAGE_ANALYSIS_QUEUE_NAME);
-const processor = new ImageAnalysisProcessor(prisma, createImageProductService(prisma), createChatService(prisma, logger as any, followUpQueue), new MessengerSender(getMessengerConfig()), connection, logger, env.IMAGE_RETENTION_HOURS);
+const processor = new ImageAnalysisProcessor(prisma, createImageProductService(prisma), createChatService(prisma, logger as any, followUpQueue), new MessengerSender(getMessengerConfig()), connection, logger, env.IMAGE_RETENTION_HOURS, new MessengerOutgoingService(prisma, outgoingQueue));
 const worker = new Worker<ImageAnalysisJobData>(IMAGE_ANALYSIS_QUEUE_NAME, async (job: Job<ImageAnalysisJobData>) => {
   try {
     if (job.name === IMAGE_ANALYSIS_JOB_NAME) return await processor.process(job.data, job.attemptsMade + 1, Number(job.opts.attempts ?? 3));
@@ -29,6 +31,6 @@ worker.on('completed', (job) => logger.info({ jobId: job.id, jobName: job.name }
 worker.on('failed', (job, error) => logger.error({ jobId: job?.id, jobName: job?.name, errorType: error.name }, 'Image job failed'));
 worker.on('error', (error) => logger.error({ errorType: error.name }, 'Image worker error'));
 let shuttingDown = false;
-async function shutdown(signal: string) { if (shuttingDown) return; shuttingDown = true; logger.info({ signal }, 'Stopping image analysis worker'); await worker.close(); await stopHeartbeat(); await Promise.allSettled([queue.close(), followUpQueue.close(), connection.quit(), prisma.$disconnect()]); process.exit(0); }
+async function shutdown(signal: string) { if (shuttingDown) return; shuttingDown = true; logger.info({ signal }, 'Stopping image analysis worker'); await worker.close(); await stopHeartbeat(); await Promise.allSettled([queue.close(), followUpQueue.close(), outgoingQueue.close(), connection.quit(), prisma.$disconnect()]); process.exit(0); }
 process.once('SIGINT', () => void shutdown('SIGINT')); process.once('SIGTERM', () => void shutdown('SIGTERM'));
 logger.info({ queue: IMAGE_ANALYSIS_QUEUE_NAME, provider: env.VISION_PROVIDER, model: env.VISION_MODEL }, 'Image analysis worker started');

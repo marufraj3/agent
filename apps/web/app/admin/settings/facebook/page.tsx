@@ -6,7 +6,15 @@ import { Badge, ErrorState, Toast } from "../../_components/ui";
 import { adminRequest, useAdminPassword } from "../../_lib/admin-client";
 type S = {
   connected: boolean;
+  connectionStatus: string;
   pageId: string | null;
+  pageName: string | null;
+  tokenMasked: string | null;
+  tokenLastCheckedAt: string | null;
+  aiEnabled: boolean;
+  testMode: boolean;
+  openAlerts: number;
+  webhookUrl: string;
   graphApiVersion: string;
   webhookConfigured: boolean;
   lastWebhookAt: string | null;
@@ -55,6 +63,16 @@ export default function Facebook() {
       setLoading(false);
     }
   }
+  async function toggleAi() {
+    if (!data?.pageId) return;
+    await adminRequest("/admin/settings/facebook", password, { method: "PATCH", body: JSON.stringify({ pageId: data.pageId, aiEnabled: !data.aiEnabled }) });
+    setToast(`AI agent ${data.aiEnabled ? "paused" : "enabled"}.`); await load();
+  }
+  async function setEmergency(enabled: boolean) {
+    if (enabled && !window.confirm("Stop all queued and future automated Messenger responses? Incoming messages will still be stored.")) return;
+    await adminRequest("/admin/settings/facebook/emergency-stop", password, { method: "POST", body: JSON.stringify({ enabled }) });
+    setToast(enabled ? "Emergency stop enabled." : "Emergency stop released.");
+  }
   return (
     <main className="mx-auto max-w-4xl px-4 py-8 sm:px-8">
       <Link
@@ -90,6 +108,10 @@ export default function Facebook() {
           </div>
           <dl className="mt-6 grid gap-5 sm:grid-cols-2">
             <Info k="Page ID" v={data.pageId ?? "Not configured"} />
+            <Info k="Page Name" v={data.pageName ?? "Unknown"} />
+            <Info k="Token" v={data.tokenMasked ?? "Not configured"} />
+            <Info k="AI Agent" v={data.aiEnabled ? "ON" : "OFF"} />
+            <Info k="Webhook URL" v={data.webhookUrl} />
             <Info
               k="Webhook Status"
               v={data.webhookConfigured ? "Configured" : "Not configured"}
@@ -121,13 +143,12 @@ export default function Facebook() {
             >
               Test Connection
             </button>
-            <button
-              onClick={() => void load()}
-              disabled={loading}
-              className="rounded-xl border px-4 py-2 font-semibold"
-            >
-              Refresh Status
-            </button>
+            <button onClick={() => void toggleAi()} disabled={loading || !data.pageId} className="rounded-xl border px-4 py-2 font-semibold">{data.aiEnabled ? "Pause AI" : "Enable AI"}</button>
+            <button onClick={() => void setEmergency(true)} className="rounded-xl bg-red-700 px-4 py-2 font-semibold text-white">Emergency Stop AI</button>
+            <button onClick={() => void setEmergency(false)} className="rounded-xl border px-4 py-2 font-semibold">Release Stop</button>
+            <Link href="/admin/system/messenger-health" className="rounded-xl border px-4 py-2 font-semibold">Health</Link>
+            <Link href="/admin/messenger/failed" className="rounded-xl border px-4 py-2 font-semibold">Failed Messages</Link>
+            <button onClick={() => void load()} disabled={loading} className="rounded-xl border px-4 py-2 font-semibold">Refresh Status</button>
           </div>
         </section>
       ) : null}

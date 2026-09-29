@@ -13,6 +13,8 @@ import {
 import { AudioTranscriptionProcessor, PermanentAudioError } from '../modules/audio/audio-transcription.processor.js';
 import { getMessengerConfig } from '../modules/channels/messenger/messenger.config.js';
 import { MessengerSender } from '../modules/channels/messenger/messenger.sender.js';
+import { createMessengerOutgoingQueue } from '../modules/channels/messenger/messenger-outgoing.queue.js';
+import { MessengerOutgoingService } from '../modules/channels/messenger/messenger-outgoing.service.js';
 import { createChatService } from '../modules/conversations/chat.factory.js';
 
 const logger = pino({
@@ -25,6 +27,7 @@ const logger = pino({
 const connection = createRedisConnection();
 const queue = createAudioTranscriptionQueue();
 const followUpQueue = createFollowUpQueue();
+const outgoingQueue = createMessengerOutgoingQueue();
 await prisma.$connect();
 const stopHeartbeat = startWorkerHeartbeat(connection, AUDIO_TRANSCRIPTION_QUEUE_NAME);
 const processor = new AudioTranscriptionProcessor(
@@ -39,6 +42,7 @@ const processor = new AudioTranscriptionProcessor(
   env.STT_MODEL,
   env.AUDIO_RETENTION_HOURS,
   env.AUDIO_DEBOUNCE_MS,
+  new MessengerOutgoingService(prisma, outgoingQueue),
 );
 
 const worker = new Worker<AudioTranscriptionJobData | AudioBatchJobData>(
@@ -75,7 +79,7 @@ async function shutdown(signal: string) {
   logger.info({ signal }, 'Stopping audio transcription worker');
   await worker.close();
   await stopHeartbeat();
-  await Promise.allSettled([queue.close(), followUpQueue.close(), connection.quit(), prisma.$disconnect()]);
+  await Promise.allSettled([queue.close(), followUpQueue.close(), outgoingQueue.close(), connection.quit(), prisma.$disconnect()]);
   process.exit(0);
 }
 process.once('SIGINT', () => void shutdown('SIGINT'));

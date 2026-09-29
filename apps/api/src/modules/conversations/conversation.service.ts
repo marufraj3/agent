@@ -8,6 +8,7 @@ import {
 export interface CreateConversationInput {
   customerId: string;
   channel: ConversationChannelName;
+  platformPageId?: string | null;
   title?: string | null;
 }
 
@@ -19,6 +20,7 @@ export class ConversationService {
       data: {
         customerId: input.customerId,
         channel: channelToPrisma[input.channel],
+        platformPageId: input.platformPageId ?? null,
         title: input.title?.trim() || null,
         status: 'ACTIVE',
       },

@@ -17,6 +17,8 @@ import { createAudioTranscriptionQueue } from '../modules/audio/audio-transcript
 import { AudioIngestionService } from '../modules/audio/audio-ingestion.service.js';
 import { createImageAnalysisQueue } from '../modules/images/image-analysis.queue.js';
 import { ImageIngestionService } from '../modules/images/image-ingestion.service.js';
+import { createMessengerOutgoingQueue } from '../modules/channels/messenger/messenger-outgoing.queue.js';
+import { MessengerOutgoingService } from '../modules/channels/messenger/messenger-outgoing.service.js';
 
 const logger = pino({
   level: env.LOG_LEVEL,
@@ -30,7 +32,8 @@ const controlQueue = createMessengerEventQueue();
 const followUpQueue = createFollowUpQueue();
 const audioQueue = createAudioTranscriptionQueue();
 const imageQueue = createImageAnalysisQueue();
-await Promise.all([prisma.$connect(), controlQueue.setGlobalConcurrency(1)]);
+const outgoingQueue = createMessengerOutgoingQueue();
+await Promise.all([prisma.$connect(), controlQueue.setGlobalConcurrency(5), outgoingQueue.setGlobalConcurrency(10)]);
 const stopHeartbeat = startWorkerHeartbeat(connection, MESSENGER_QUEUE_NAME);
 const service = new MessengerService(
   prisma,
@@ -39,6 +42,7 @@ const service = new MessengerService(
   connection,
   new AudioIngestionService(prisma, audioQueue, connection, env.AUDIO_RATE_LIMIT_PER_MINUTE),
   new ImageIngestionService(prisma, imageQueue),
+  new MessengerOutgoingService(prisma, outgoingQueue),
 );
 
 const worker = new Worker<MessengerJobData>(
@@ -51,11 +55,11 @@ const worker = new Worker<MessengerJobData>(
       throw error;
     }
   },
-  { connection, concurrency: 1, prefix: 'alzeena' },
+  { connection, concurrency: 5, prefix: 'alzeena' },
 );
 
-worker.on('completed', (job) => logger.info({ jobId: job.id }, 'Messenger event processed'));
-worker.on('failed', (job, error) => logger.error({ jobId: job?.id, errorType: error.name }, 'Messenger event failed'));
+worker.on('completed', (job) => logger.info({ event: 'MESSENGER_EVENT_PROCESSED', jobId: job.id, pageId: job.data.event.pageId, correlationId: job.data.correlationId }, 'Messenger event processed'));
+worker.on('failed', (job, error) => logger.error({ event: 'MESSENGER_EVENT_FAILED', jobId: job?.id, pageId: job?.data.event.pageId, correlationId: job?.data.correlationId, errorType: error.name }, 'Messenger event failed'));
 worker.on('error', (error) => logger.error({ errorType: error.name }, 'Messenger worker error'));
 
 let shuttingDown = false;
@@ -65,7 +69,7 @@ async function shutdown(signal: string) {
   logger.info({ signal }, 'Stopping Messenger worker');
   await worker.close();
   await stopHeartbeat();
-  await Promise.allSettled([controlQueue.close(), followUpQueue.close(), audioQueue.close(), imageQueue.close(), connection.quit(), prisma.$disconnect()]);
+  await Promise.allSettled([controlQueue.close(), followUpQueue.close(), audioQueue.close(), imageQueue.close(), outgoingQueue.close(), connection.quit(), prisma.$disconnect()]);
   process.exit(0);
 }
 process.once('SIGINT', () => void shutdown('SIGINT'));
