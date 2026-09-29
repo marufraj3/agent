@@ -4,6 +4,7 @@ import { env } from "../../../config/env.js";
 import { AppError } from "../../../errors/app-error.js";
 import { requireAdmin } from "../../admin/auth/require-admin.js";
 import { OrderService } from "../order.service.js";
+import { CustomerJourneyService } from "../../automation/customer-journey.service.js";
 import { OrderEngineError } from "../order.types.js";
 import { WebsiteOrderApiClient } from "../website-order-api.client.js";
 
@@ -20,7 +21,10 @@ const listQuerySchema = z
         "SUBMITTED",
         "COMPLETED",
         "FAILED",
+        "ABANDONED",
+        "EXPIRED",
         "CANCELLED",
+        "RETURNED",
       ])
       .optional(),
     search: z.string().trim().max(200).optional(),
@@ -37,6 +41,7 @@ export async function orderAdminRoutes(app: FastifyInstance): Promise<void> {
     app.log,
   );
   const protectedRoute = { preHandler: requireAdmin };
+  const journey = new CustomerJourneyService(app.prisma);
 
   app.get("/api/admin/orders", protectedRoute, async (request) => {
     const parsed = listQuerySchema.safeParse(request.query);
@@ -97,11 +102,10 @@ export async function orderAdminRoutes(app: FastifyInstance): Promise<void> {
     if (!parsed.success)
       throw new AppError("Invalid order ID", 400, "VALIDATION_ERROR");
     try {
-      return {
-        success: true,
-        message: "Order cancelled",
-        data: await orders.cancelOrder(parsed.data.id),
-      };
+      const data = await orders.cancelOrder(parsed.data.id);
+      await db.followUp.updateMany({ where: { orderId: data.id, status: "PENDING" }, data: { status: "CANCELLED", cancelledAt: new Date(), failureReason: "order_cancelled" } });
+      await journey.transition(data.customerId, "CANCELLED", "ORDER_CANCELLED", { summary: "Order cancelled", conversationId: data.conversationId, orderId: data.id }).catch(() => undefined);
+      return { success: true, message: "Order cancelled", data };
     } catch (error) {
       if (error instanceof OrderEngineError)
         throw new AppError(error.message, error.statusCode, error.code);

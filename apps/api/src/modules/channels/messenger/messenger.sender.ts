@@ -17,7 +17,7 @@ export class MessengerSender {
   private readonly breaker = getCircuitBreaker('facebook');
   constructor(private readonly config: MessengerConfig, private readonly fetchImpl: typeof fetch = fetch) {}
 
-  async sendText(recipientId: string, text: string): Promise<MessengerSendResult> {
+  async sendText(recipientId: string, text: string, messagingType: 'RESPONSE' | 'UPDATE' = 'RESPONSE'): Promise<MessengerSendResult> {
     if (!this.config.pageId || !this.config.pageAccessToken) {
       return { success: false, errorCode: 'MESSENGER_NOT_CONFIGURED', errorMessage: 'Messenger delivery is not configured', retryable: false };
     }
@@ -31,7 +31,7 @@ export class MessengerSender {
         {
           method: 'POST', signal: controller.signal,
           headers: { authorization: `Bearer ${this.config.pageAccessToken}`, 'content-type': 'application/json' },
-          body: JSON.stringify({ recipient: { id: recipientId }, messaging_type: 'RESPONSE', message: { text } }),
+          body: JSON.stringify({ recipient: { id: recipientId }, messaging_type: messagingType, message: { text } }),
         },
       ));
     } catch (error) {

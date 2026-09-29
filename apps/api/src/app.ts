@@ -10,6 +10,7 @@ import { adminRoutes } from './modules/admin/routes/admin.routes.js';
 import { dashboardRoutes } from './modules/admin/routes/dashboard.routes.js';
 import { aiTestRoutes } from './modules/ai/routes/ai-test.routes.js';
 import { audioRoutes } from './modules/audio/routes/audio.routes.js';
+import { automationRoutes } from './modules/automation/routes/automation.routes.js';
 import { messengerRoutes } from './modules/channels/messenger/routes/messenger.routes.js';
 import { chatRoutes } from './modules/conversations/routes/chat.routes.js';
 import { conversationAdminRoutes } from './modules/conversations/routes/conversation-admin.routes.js';
@@ -52,6 +53,7 @@ export async function buildApp(): Promise<FastifyInstance> {
   await app.register(dashboardRoutes);
   await app.register(aiTestRoutes);
   await app.register(audioRoutes);
+  await app.register(automationRoutes);
   await app.register(messengerRoutes);
   await app.register(chatRoutes);
   await app.register(conversationAdminRoutes);

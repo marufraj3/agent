@@ -178,6 +178,7 @@ export async function conversationAdminRoutes(
               createdAt: true,
             },
           },
+          activities: { orderBy: { createdAt: "desc" }, take: 100 },
           _count: {
             select: { messages: true, conversations: true, orders: true },
           },

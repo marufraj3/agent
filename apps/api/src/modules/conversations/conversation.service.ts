@@ -1,4 +1,5 @@
 import { Prisma, type PrismaClient } from '@alzeena/database';
+import { assertJourneyTransition, type JourneyState } from '../automation/customer-journey.service.js';
 import {
   channelToPrisma,
   type ConversationChannelName,
@@ -63,18 +64,19 @@ export class ConversationService {
     }
   }
 
-  closeConversation(id: string) {
-    return this.prisma.conversation.update({
-      where: { id },
-      data: { status: 'CLOSED' },
+  async closeConversation(id: string) {
+    const db = this.prisma as any;
+    return db.$transaction(async (tx: any) => {
+      const conversation = await tx.conversation.update({ where: { id }, data: { status: 'CLOSED' } });
+      await tx.followUp.updateMany({ where: { conversationId: id, status: 'PENDING' }, data: { status: 'CANCELLED', cancelledAt: new Date(), failureReason: 'conversation_closed' } });
+      await tx.customerActivity.create({ data: { customerId: conversation.customerId, conversationId: id, type: 'CONVERSATION_CLOSED', summary: 'Conversation closed' } });
+      return conversation;
     });
   }
 
-  markConversationHuman(id: string) {
-    return this.prisma.conversation.update({
-      where: { id },
-      data: { status: 'HUMAN' },
-    });
+  async markConversationHuman(id: string) {
+    const db=this.prisma as any;
+    return db.$transaction(async(tx:any)=>{const conversation=await tx.conversation.update({where:{id},data:{status:'HUMAN'}});const customer=await tx.customer.findUnique({where:{id:conversation.customerId}});if(customer)assertJourneyTransition(customer.journeyState as JourneyState,'HUMAN_SUPPORT');await tx.customer.update({where:{id:conversation.customerId},data:{journeyState:'HUMAN_SUPPORT',lastActivityAt:new Date()}});await tx.customerActivity.create({data:{customerId:conversation.customerId,conversationId:id,type:'HUMAN_HANDOVER',summary:'Conversation moved to human support'}});await tx.followUp.updateMany({where:{conversationId:id,status:'PENDING'},data:{status:'CANCELLED',cancelledAt:new Date(),failureReason:'human_handover'}});return conversation;});
   }
 
   updateLastMessage(id: string, at = new Date()) {

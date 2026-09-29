@@ -13,6 +13,9 @@ export const aiIntentSchema = z.enum([
   'order_intent',
   'general_question',
   'human_request',
+  'follow_up_request',
+  'order_status',
+  'reorder_intent',
   'unknown',
 ]);
 
@@ -39,6 +42,9 @@ export const aiInputSchema = z
       .object({
         name: z.string().trim().max(255).nullable().optional(),
         language: z.string().trim().max(20).nullable().optional(),
+        preferredSize: z.string().trim().max(50).nullable().optional(),
+        preferredCategory: z.string().trim().max(100).nullable().optional(),
+        preferredColor: z.string().trim().max(100).nullable().optional(),
       })
       .strict()
       .optional(),
@@ -56,7 +62,7 @@ export const modelResponseSchema = z
     language: z.enum(['bn', 'banglish', 'en']),
     entities: extractedEntitiesSchema,
     requiresHuman: z.boolean(),
-    action: z.enum(['reply', 'clarify', 'recommend', 'begin_order', 'handover', 'request_human', 'request_product_clarification', 'create_order', 'update_order', 'confirm_order', 'cancel_order', 'request_order_information', 'request_voice_clarification']).nullable(),
+    action: z.enum(['reply', 'clarify', 'recommend', 'begin_order', 'handover', 'request_human', 'request_product_clarification', 'create_order', 'update_order', 'confirm_order', 'cancel_order', 'request_order_information', 'request_voice_clarification', 'schedule_followup']).nullable(),
     productIds: z.array(z.number().int().positive()).max(5),
   })
   .strict();

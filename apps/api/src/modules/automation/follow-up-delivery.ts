@@ -1,0 +1,3 @@
+import type { MessengerSender } from '../channels/messenger/messenger.sender.js';
+export interface FollowUpDeliveryProvider { readonly channel:string; deliver(input:{recipientId:string;message:string}):Promise<{success:boolean;retryable:boolean;errorCode?:string}>; }
+export class MessengerFollowUpDeliveryProvider implements FollowUpDeliveryProvider { readonly channel='MESSENGER';constructor(private readonly sender:MessengerSender){}async deliver(input:{recipientId:string;message:string}){const result=await this.sender.sendText(input.recipientId,input.message,'UPDATE');return{success:result.success,retryable:result.retryable,errorCode:result.errorCode};}}

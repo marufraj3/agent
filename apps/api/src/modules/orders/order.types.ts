@@ -3,6 +3,7 @@ export const openOrderStatuses = [
   'AWAITING_INFORMATION',
   'AWAITING_CONFIRMATION',
   'CONFIRMED',
+  'ABANDONED',
 ] as const;
 
 export type OrderStatusName =
@@ -13,8 +14,11 @@ export type OrderStatusName =
   | 'SUBMITTED'
   | 'COMPLETED'
   | 'FAILED'
-  | 'CANCELLED';
-export type ConfirmationStatusName = 'PENDING' | 'CONFIRMED' | 'REJECTED';
+  | 'ABANDONED'
+  | 'EXPIRED'
+  | 'CANCELLED'
+  | 'RETURNED';
+export type ConfirmationStatusName = 'NOT_REQUESTED' | 'PENDING' | 'CONFIRMED' | 'REJECTED';
 export type DeliveryLocationName = 'DHAKA' | 'OUTSIDE_DHAKA';
 export type OrderSourceName = 'AI' | 'TEST' | 'MESSENGER' | 'WEB';
 export type SubmissionResultName =

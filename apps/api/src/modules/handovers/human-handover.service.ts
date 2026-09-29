@@ -1,5 +1,6 @@
 import type { PrismaClient } from '@alzeena/database';
 import { defaultAdminActor } from './admin-actor.js';
+import { assertJourneyTransition, type JourneyState } from '../automation/customer-journey.service.js';
 import { HandoverError, reasonToPrisma, type HandoverReasonName } from './handover.types.js';
 
 export const DEFAULT_ADMIN_ACTOR = defaultAdminActor.id;
@@ -16,7 +17,7 @@ export class HumanHandoverService {
   constructor(prisma: PrismaClient) { this.db = prisma as any; }
 
   async requestHandover(input: RequestHandoverInput) {
-    const conversation = await this.db.conversation.findUnique({ where: { id: input.conversationId } });
+    const conversation = await this.db.conversation.findUnique({ where: { id: input.conversationId }, include: { customer: { select: { journeyState: true } } } });
     if (!conversation) throw new HandoverError('Conversation not found', 'CONVERSATION_NOT_FOUND', 404);
     if (conversation.status === 'CLOSED') throw new HandoverError('Closed conversation cannot be handed over', 'CONVERSATION_CLOSED', 409);
     const existing = await this.db.conversationHandover.findFirst({
@@ -24,12 +25,13 @@ export class HumanHandoverService {
       orderBy: { createdAt: 'desc' },
     });
     if (existing) {
-      if (conversation.status !== 'HUMAN') {
-        await this.db.conversation.update({ where: { id: input.conversationId }, data: { status: 'HUMAN' } });
-      }
+      if (conversation.customer.journeyState !== 'HUMAN_SUPPORT') { assertJourneyTransition(conversation.customer.journeyState as JourneyState, 'HUMAN_SUPPORT'); await this.db.customer.update({ where: { id: conversation.customerId }, data: { journeyState: 'HUMAN_SUPPORT', lastActivityAt: new Date() } }); }
+      if (conversation.status !== 'HUMAN') await this.db.conversation.update({ where: { id: input.conversationId }, data: { status: 'HUMAN' } });
+      await this.db.followUp.updateMany({ where: { conversationId: input.conversationId, status: 'PENDING' }, data: { status: 'CANCELLED', cancelledAt: new Date(), failureReason: 'human_handover' } });
       return existing;
     }
 
+    assertJourneyTransition(conversation.customer.journeyState as JourneyState, 'HUMAN_SUPPORT');
     try {
       return await this.db.$transaction(async (tx: any) => {
         const handover = await tx.conversationHandover.create({
@@ -44,6 +46,9 @@ export class HumanHandoverService {
           where: { id: input.conversationId },
           data: { status: 'HUMAN', consecutiveAiFailures: 0 },
         });
+        await tx.followUp.updateMany({ where: { conversationId: input.conversationId, status: 'PENDING' }, data: { status: 'CANCELLED', cancelledAt: new Date(), failureReason: 'human_handover' } });
+        await tx.customer.update({ where: { id: conversation.customerId }, data: { journeyState: 'HUMAN_SUPPORT', lastActivityAt: new Date() } });
+        await tx.customerActivity.create({ data: { customerId: conversation.customerId, conversationId: input.conversationId, type: 'HUMAN_HANDOVER', summary: 'Conversation moved to human support' } });
         await tx.adminNotification.create({
           data: {
             conversationId: input.conversationId,
@@ -111,6 +116,7 @@ export class HumanHandoverService {
         where: { id: handover.conversationId },
         data: { ...(returnToAi ? { status: 'ACTIVE' } : {}), assignedTo: null, consecutiveAiFailures: 0 },
       });
+      if (returnToAi) { const conversation = await tx.conversation.findUnique({ where: { id: handover.conversationId } }); if (conversation) { const order=await tx.order.findFirst({where:{customerId:conversation.customerId,status:{in:['DRAFT','AWAITING_INFORMATION','AWAITING_CONFIRMATION','SUBMITTED']}},orderBy:{updatedAt:'desc'}});const journeyState=order?.status==='AWAITING_CONFIRMATION'?'AWAITING_CONFIRMATION':order?.status==='SUBMITTED'?'ORDER_SUBMITTED':order?'AWAITING_CUSTOMER_INFO':'ENGAGED';const customer=await tx.customer.findUnique({where:{id:conversation.customerId}});if(customer)assertJourneyTransition(customer.journeyState as JourneyState,journeyState);await tx.customer.update({ where: { id: conversation.customerId }, data: { journeyState, lastActivityAt: new Date() } }); } }
       await this.log(tx, returnToAi ? 'CONVERSATION_RETURNED_TO_AI' : 'HANDOVER_RESOLVED', handover.conversationId, { handoverId: id, resolvedBy });
       return updated;
     });

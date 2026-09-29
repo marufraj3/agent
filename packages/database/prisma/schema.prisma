@@ -182,6 +182,57 @@ enum MessageRole {
   HUMAN     @map("human")
 }
 
+enum CustomerJourneyState {
+  NEW                    @map("new")
+  ENGAGED                @map("engaged")
+  PRODUCT_INTEREST       @map("product_interest")
+  ORDER_STARTED          @map("order_started")
+  AWAITING_CUSTOMER_INFO @map("awaiting_customer_info")
+  AWAITING_CONFIRMATION  @map("awaiting_confirmation")
+  ORDER_CONFIRMED        @map("order_confirmed")
+  ORDER_SUBMITTED        @map("order_submitted")
+  POST_ORDER             @map("post_order")
+  COMPLETED              @map("completed")
+  CANCELLED              @map("cancelled")
+  HUMAN_SUPPORT          @map("human_support")
+}
+
+enum CustomerActivityType {
+  MESSAGE_RECEIVED             @map("message_received")
+  PRODUCT_VIEWED               @map("product_viewed")
+  PRODUCT_INTEREST             @map("product_interest")
+  PRODUCT_SELECTED             @map("product_selected")
+  ORDER_STARTED                @map("order_started")
+  CUSTOMER_INFO_PROVIDED       @map("customer_info_provided")
+  ORDER_DRAFT_CREATED          @map("order_draft_created")
+  ORDER_CONFIRMATION_REQUESTED @map("order_confirmation_requested")
+  ORDER_CONFIRMED              @map("order_confirmed")
+  ORDER_SUBMITTED              @map("order_submitted")
+  ORDER_CANCELLED              @map("order_cancelled")
+  ORDER_COMPLETED              @map("order_completed")
+  HUMAN_HANDOVER               @map("human_handover")
+  CONVERSATION_CLOSED          @map("conversation_closed")
+}
+
+enum FollowUpType {
+  ORDER_CONFIRMATION_REMINDER @map("order_confirmation_reminder")
+  ABANDONED_ORDER             @map("abandoned_order")
+  CUSTOMER_REQUESTED_FOLLOWUP @map("customer_requested_followup")
+  POST_ORDER                  @map("post_order")
+  REVIEW_REQUEST              @map("review_request")
+  REORDER                     @map("reorder")
+}
+
+enum FollowUpStatus {
+  PENDING      @map("pending")
+  PROCESSING   @map("processing")
+  SENT         @map("sent")
+  CANCELLED    @map("cancelled")
+  FAILED       @map("failed")
+  BLOCKED      @map("blocked")
+  NOT_ELIGIBLE @map("not_eligible")
+}
+
 enum MessageType {
   TEXT   @map("text")
   IMAGE  @map("image")
@@ -199,17 +250,87 @@ model Customer {
   platform       String?        @db.VarChar(50)
   platformUserId String?        @map("platform_user_id") @db.VarChar(255)
   language       String?        @db.VarChar(20)
-  metadata       Json?          @db.JsonB
-  createdAt      DateTime       @default(now()) @map("created_at")
-  updatedAt      DateTime       @updatedAt @map("updated_at")
-  conversations  Conversation[]
-  messages       Message[]
-  orders         Order[]
+  metadata              Json?                @db.JsonB
+  journeyState          CustomerJourneyState @default(NEW) @map("journey_state")
+  automationOptOut      Boolean               @default(false) @map("automation_opt_out")
+  preferredSize         String?               @map("preferred_size") @db.VarChar(50)
+  preferredCategory     String?               @map("preferred_category") @db.VarChar(100)
+  preferredColor        String?               @map("preferred_color") @db.VarChar(100)
+  lastActivityAt        DateTime               @default(now()) @map("last_activity_at")
+  lastConversationAt    DateTime?              @map("last_conversation_at")
+  lastOrderAt           DateTime?              @map("last_order_at")
+  lastProductInterestAt DateTime?              @map("last_product_interest_at")
+  createdAt             DateTime               @default(now()) @map("created_at")
+  updatedAt             DateTime               @updatedAt @map("updated_at")
+  conversations         Conversation[]
+  messages              Message[]
+  orders                Order[]
+  activities            CustomerActivity[]
+  followUps             FollowUp[]
 
   @@unique([platform, platformUserId])
   @@index([platformUserId])
   @@index([createdAt])
+  @@index([journeyState, lastActivityAt])
   @@map("customers")
+}
+
+model CustomerActivity {
+  id             String               @id @default(uuid()) @db.Uuid
+  customerId     String               @map("customer_id") @db.Uuid
+  conversationId String?              @map("conversation_id") @db.Uuid
+  orderId        String?              @map("order_id") @db.Uuid
+  type           CustomerActivityType
+  summary        String               @db.VarChar(500)
+  metadata       Json?                @db.JsonB
+  createdAt      DateTime             @default(now()) @map("created_at")
+  customer       Customer             @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  conversation   Conversation?        @relation(fields: [conversationId], references: [id], onDelete: SetNull)
+  order          Order?               @relation(fields: [orderId], references: [id], onDelete: SetNull)
+
+  @@index([customerId, createdAt])
+  @@index([conversationId, createdAt])
+  @@index([orderId, createdAt])
+  @@map("customer_activities")
+}
+
+model FollowUp {
+  id             String         @id @default(uuid()) @db.Uuid
+  customerId     String         @map("customer_id") @db.Uuid
+  conversationId String         @map("conversation_id") @db.Uuid
+  orderId        String?        @map("order_id") @db.Uuid
+  type           FollowUpType
+  scheduledAt    DateTime       @map("scheduled_at")
+  status         FollowUpStatus @default(PENDING)
+  payload        Json           @db.JsonB
+  idempotencyKey String         @unique @map("idempotency_key") @db.VarChar(255)
+  attempts       Int            @default(0)
+  sentAt         DateTime?      @map("sent_at")
+  cancelledAt    DateTime?      @map("cancelled_at")
+  failureReason  String?        @map("failure_reason") @db.VarChar(500)
+  createdAt      DateTime       @default(now()) @map("created_at")
+  updatedAt      DateTime       @updatedAt @map("updated_at")
+  customer       Customer       @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  conversation   Conversation   @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  order          Order?         @relation(fields: [orderId], references: [id], onDelete: SetNull)
+
+  @@index([status, scheduledAt])
+  @@index([customerId, createdAt])
+  @@index([conversationId, status])
+  @@map("follow_ups")
+}
+
+model FollowUpTemplate {
+  id        String       @id @default(uuid()) @db.Uuid
+  name      String       @db.VarChar(100)
+  trigger   FollowUpType @unique
+  delayMinutes Int       @map("delay_minutes")
+  message   String       @db.VarChar(2000)
+  enabled   Boolean      @default(true)
+  createdAt DateTime     @default(now()) @map("created_at")
+  updatedAt DateTime     @updatedAt @map("updated_at")
+
+  @@map("follow_up_templates")
 }
 
 model Conversation {
@@ -232,6 +353,8 @@ model Conversation {
   orders        Order[]
   handovers     ConversationHandover[]
   notifications AdminNotification[]
+  activities    CustomerActivity[]
+  followUps     FollowUp[]
 
   @@index([customerId, status, lastMessageAt])
   @@index([status, assignedTo, lastMessageAt])
@@ -356,10 +479,14 @@ enum OrderStatus {
   SUBMITTED             @map("submitted")
   COMPLETED             @map("completed")
   FAILED                @map("failed")
+  ABANDONED             @map("abandoned")
+  EXPIRED               @map("expired")
   CANCELLED             @map("cancelled")
+  RETURNED              @map("returned")
 }
 
 enum OrderConfirmationStatus {
+  NOT_REQUESTED @map("not_requested")
   PENDING   @map("pending")
   CONFIRMED @map("confirmed")
   REJECTED  @map("rejected")
@@ -415,6 +542,8 @@ model Order {
   customer           Customer                 @relation(fields: [customerId], references: [id], onDelete: Restrict)
   conversation       Conversation             @relation(fields: [conversationId], references: [id], onDelete: Restrict)
   items              OrderItem[]
+  activities         CustomerActivity[]
+  followUps          FollowUp[]
 
   @@index([customerId, createdAt])
   @@index([conversationId, status, updatedAt])

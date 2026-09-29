@@ -20,6 +20,7 @@ type Data = {
     averageResponseTimeMs: number;
   };
   orders: Record<string, number>;
+  automation: { pendingFollowUps: number; sentToday: number; cancelled: number; failed: number; abandonedOrders: number };
 };
 const ranges = [
   ["today", "Today"],
@@ -184,6 +185,9 @@ export default function Dashboard() {
               />
             </Section>
           </div>
+          <Section title="Automation">
+            <Cards values={[["Pending Follow-ups",data.automation.pendingFollowUps],["Sent Today",data.automation.sentToday],["Cancelled",data.automation.cancelled],["Failed",data.automation.failed],["Abandoned Orders",data.automation.abandonedOrders]]}/>
+          </Section>
           <Section title="Order Statistics">
             <Cards
               values={Object.entries(data.orders).map(([k, v]) => [

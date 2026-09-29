@@ -9,9 +9,12 @@ import { OrderConversationService } from '../orders/order-conversation.service.j
 import { OrderService } from '../orders/order.service.js';
 import { ProductCatalogService } from '../products/product-catalog.service.js';
 import { WebsiteOrderApiClient } from '../orders/website-order-api.client.js';
+import { CustomerJourneyService } from '../automation/customer-journey.service.js';
+import { FollowUpService } from '../automation/follow-up.service.js';
+import type { createFollowUpQueue } from '../automation/follow-up.queue.js';
 import { ChatService } from './chat.service.js';
 
-export function createChatService(prisma: PrismaClient, logger: FastifyBaseLogger | any) {
+export function createChatService(prisma: PrismaClient, logger: FastifyBaseLogger | any, followUpQueue?: ReturnType<typeof createFollowUpQueue>) {
   return new ChatService(
     prisma,
     createAIService(prisma, logger),
@@ -26,5 +29,7 @@ export function createChatService(prisma: PrismaClient, logger: FastifyBaseLogge
     new HumanHandoverService(prisma),
     env.AI_MAX_CONSECUTIVE_FAILURES,
     env.AI_CONFIDENCE_LOW,
+    new CustomerJourneyService(prisma),
+    followUpQueue ? new FollowUpService(prisma, followUpQueue) : undefined,
   );
 }

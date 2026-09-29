@@ -7,6 +7,9 @@ import type { VoiceUnderstandingService } from '../audio/voice-understanding.ser
 import type { ImageProductService } from '../images/image-product.service.js';
 import type { ImageInput } from '../images/image.types.js';
 import type { HandoverTool } from '../ai/sales-tool.interfaces.js';
+import type { CustomerJourneyService } from '../automation/customer-journey.service.js';
+import type { FollowUpService } from '../automation/follow-up.service.js';
+import { parseFollowUpTime } from '../automation/follow-up-time.js';
 import type { HandoverReasonName } from '../handovers/handover.types.js';
 import type { OrderConversationService } from '../orders/order-conversation.service.js';
 import { ProductCatalogService } from '../products/product-catalog.service.js';
@@ -66,7 +69,7 @@ function voiceClarificationResponse(
     entities: {
       productCode: null, productName: null, size: null, color: null, quantity: null,
       minPrice: null, maxPrice: null, customerName: null, phone: null, address: null,
-      deliveryLocation: null, ordinalReference: null, correction: false,
+      deliveryLocation: null, ordinalReference: null, correction: false, requestedFollowUp: false,
     },
     requiresHuman: false,
     action: 'request_voice_clarification',
@@ -93,6 +96,8 @@ export class ChatService {
     private readonly handovers?: HandoverTool,
     private readonly maxConsecutiveFailures = 2,
     private readonly lowConfidenceThreshold = 0.45,
+    private readonly journey?: CustomerJourneyService,
+    private readonly followUps?: FollowUpService,
   ) {
     this.customers = new CustomerService(prisma);
     this.conversations = new ConversationService(prisma);
@@ -230,6 +235,15 @@ export class ChatService {
       externalMessageId: input.externalMessageId,
       ...(input.audio || input.image || input.sourceMetadata ? { metadata: baseMetadata } : {}),
     });
+    await this.followUps?.cancelPending(conversation.id, 'customer_replied');
+    const optOut = /(?:আর\s*(?:message|মেসেজ)\s*(?:দিয়েন|দিবেন)\s*না|follow-?up\s*(?:লাগবে না|বন্ধ)|stop\s*(?:messages?|follow-?ups?))/iu.test(initialContent);
+    if (optOut) await (this.prisma as any).customer.update({ where: { id: customer.id }, data: { automationOptOut: true } });
+    else if (/(?:follow-?up|মেসেজ).*(?:আবার|চালু|resume|start)/iu.test(initialContent)) await (this.prisma as any).customer.update({ where: { id: customer.id }, data: { automationOptOut: false } });
+    try {
+      const currentState = (customer as typeof customer & { journeyState?: string }).journeyState ?? 'NEW';
+      if (currentState === 'NEW') await this.journey?.transition(customer.id, 'ENGAGED', 'MESSAGE_RECEIVED', { summary: 'Customer sent a message', conversationId: conversation.id });
+      else await this.journey?.record(customer.id, 'MESSAGE_RECEIVED', { summary: 'Customer sent a message', conversationId: conversation.id });
+    } catch { /* Journey logging must not interrupt customer messaging. */ }
 
     let transcription: Transcription | undefined;
     let voiceProductIds: number[] = [];
@@ -281,6 +295,24 @@ export class ChatService {
       }
     }
 
+    if (/\b(?:my|preferred|আমার|পছন্দ)\b/iu.test(customerMessage)) {
+      const preference = extractEntities(customerMessage);
+      await (this.prisma as any).customer.update({ where: { id: customer.id }, data: { ...(preference.size ? { preferredSize: preference.size } : {}), ...(preference.color ? { preferredColor: preference.color } : {}) } });
+    }
+
+    if (!response && this.followUps) {
+      const requested = parseFollowUpTime(customerMessage);
+      if (requested.kind === 'ambiguous') {
+        response = { reply: requested.question, intent: 'follow_up_request', confidence: 1, language: 'bn', entities: { ...extractEntities(customerMessage), requestedFollowUp: true }, requiresHuman: false, action: 'clarify', productIds: [], products: [], source: 'rules' };
+      } else if (requested.kind === 'scheduled') {
+        try {
+          const followUp = await this.followUps.schedule({ customerId: customer.id, conversationId: conversation.id, type: 'CUSTOMER_REQUESTED_FOLLOWUP', scheduledAt: requested.at, message: 'আপনি পরে যোগাযোগ করতে বলেছিলেন। এখন কি প্রোডাক্ট বা অর্ডারে সাহায্য করতে পারি?', createdBy: 'customer' });
+          const notEligible = ['NOT_ELIGIBLE','BLOCKED'].includes((followUp as any).status);
+          response = { reply: notEligible ? 'এই সময়ে Messenger policy অনুযায়ী automatic reminder পাঠানো যাবে না। একজন admin প্রয়োজন হলে সাহায্য করতে পারবেন।' : `ঠিক আছে, ${requested.at.toLocaleString('en-GB', { timeZone: 'Asia/Dhaka' })}-এ মনে করিয়ে দেব।`, intent: 'follow_up_request', confidence: 1, language: 'bn', entities: { ...extractEntities(customerMessage), requestedFollowUp: true }, requiresHuman: false, action: notEligible ? 'reply' : 'schedule_followup', productIds: [], products: [], source: 'rules' };
+        } catch { response = { reply: 'দুঃখিত, এখন follow-up schedule করা যাচ্ছে না। চাইলে একটি নির্দিষ্ট সময় আবার বলুন।', intent: 'follow_up_request', confidence: 0.7, language: 'bn', entities: { ...extractEntities(customerMessage), requestedFollowUp: true }, requiresHuman: false, action: 'clarify', productIds: [], products: [], source: 'fallback' }; }
+      }
+    }
+
     if (!response) {
       const memory = await this.context.buildContext(conversation.id, {
         excludeMessageId: userMessage.id,
@@ -318,7 +350,7 @@ export class ChatService {
           contextProductIds,
           conversationSummary: memory.conversation.summary,
           salesState: memory.conversation.salesState,
-          customerContext: { name: customer.name, language: customer.language },
+          customerContext: { name: customer.name, language: customer.language, preferredSize: (customer as any).preferredSize, preferredCategory: (customer as any).preferredCategory, preferredColor: (customer as any).preferredColor },
         });
       }
     }
@@ -383,7 +415,30 @@ export class ChatService {
       },
     });
     await this.persistSalesState(conversation.id, response, (conversation as typeof conversation & { conversationSummary?: unknown }).conversationSummary);
+    try {
+      if (!response.requiresHuman) {
+      if (response.orderAction?.type === 'confirm_order') {
+        await this.journey?.transition(customer.id, 'ORDER_CONFIRMED', 'ORDER_CONFIRMED', { summary: 'Customer confirmed order', conversationId: conversation.id, orderId: response.orderAction.orderId });
+        await this.journey?.transition(customer.id, 'ORDER_SUBMITTED', 'ORDER_SUBMITTED', { summary: 'Order submitted to website', conversationId: conversation.id, orderId: response.orderAction.orderId });
+      }
+      else if (response.orderAction?.type === 'request_order_information') {
+        await this.journey?.transition(customer.id, 'AWAITING_CONFIRMATION', 'ORDER_CONFIRMATION_REQUESTED', { summary: 'Order confirmation requested', conversationId: conversation.id, orderId: response.orderAction.orderId });
+        await this.followUps?.scheduleConfirmationReminder({ customerId: customer.id, conversationId: conversation.id, orderId: response.orderAction.orderId });
+      } else if (response.orderAction) {
+        if (response.orderAction.type === 'create_order') {
+          await this.journey?.record(customer.id, 'PRODUCT_SELECTED', { summary: response.entities.size ? `Selected ${response.entities.size} size` : 'Selected a product for order', conversationId: conversation.id, orderId: response.orderAction.orderId });
+          await this.journey?.transition(customer.id, 'ORDER_STARTED', 'ORDER_STARTED', { summary: 'Customer started an order', conversationId: conversation.id, orderId: response.orderAction.orderId });
+        }
+        await this.journey?.transition(customer.id, 'AWAITING_CUSTOMER_INFO', response.orderAction.type === 'create_order' ? 'ORDER_DRAFT_CREATED' : 'CUSTOMER_INFO_PROVIDED', { summary: response.orderAction.type === 'create_order' ? 'Order draft created' : response.entities.size ? `Selected ${response.entities.size} size` : 'Order information updated', conversationId: conversation.id, orderId: response.orderAction.orderId });
+      }
+      else if (response.productIds.length) {
+        await this.journey?.record(customer.id, 'PRODUCT_VIEWED', { summary: `Asked about ${response.products[0]?.productCode ?? 'a product'}`, conversationId: conversation.id, metadata: { productIds: response.productIds } });
+        await this.journey?.transition(customer.id, 'PRODUCT_INTEREST', 'PRODUCT_INTEREST', { summary: `Interested in ${response.products[0]?.productCode ?? 'a product'}`, conversationId: conversation.id, metadata: { productIds: response.productIds } });
+      }
+      }
+    } catch { /* Automation state must not interrupt the customer response. */ }
     if (response.requiresHuman) {
+      await this.followUps?.cancelPending(conversation.id, 'human_handover');
       if (this.handovers && handoverReason) {
         await this.handovers.requestHandover({
           conversationId: conversation.id,

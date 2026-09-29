@@ -15,6 +15,7 @@ export const extractedEntitiesSchema = z.object({
   deliveryLocation: z.enum(['DHAKA', 'OUTSIDE_DHAKA']).nullable().default(null),
   ordinalReference: z.number().int().min(1).max(10).nullable().default(null),
   correction: z.boolean().default(false),
+  requestedFollowUp: z.boolean().default(false),
 }).strict();
 export type ExtractedEntities = z.infer<typeof extractedEntitiesSchema>;
 
@@ -48,5 +49,6 @@ export function extractEntities(message: string): ExtractedEntities {
   const ordinal = normalized.match(/\b(1st|first|প্রথম)\b/i) ? 1 : normalized.match(/\b(2nd|second|দ্বিতীয়)\b/i) ? 2 : normalized.match(/\b(3rd|third|তৃতীয়)\b/i) ? 3 : null;
   const deliveryLocation = /outside\s*dhaka|ঢাকার বাইরে/i.test(normalized) ? 'OUTSIDE_DHAKA' : /dhaka|ঢাকা|mohammadpur|মোহাম্মদপুর/i.test(normalized) ? 'DHAKA' : null;
   const correction = /bodole|instead|change|পরিবর্তন|বদলে|হবে/i.test(normalized);
-  return extractedEntitiesSchema.parse({ productCode: code, productName: namedProduct, size, color, quantity, minPrice, maxPrice, customerName, phone, address, deliveryLocation, ordinalReference: ordinal, correction });
+  const requestedFollowUp = /(?:মনে করিয়ে|জানাবেন|follow.?up|remind|পরে order|পরে অর্ডার)/iu.test(original);
+  return extractedEntitiesSchema.parse({ productCode: code, productName: namedProduct, size, color, quantity, minPrice, maxPrice, customerName, phone, address, deliveryLocation, ordinalReference: ordinal, correction, requestedFollowUp });
 }

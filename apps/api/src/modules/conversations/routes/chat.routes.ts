@@ -1,5 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import { env } from '../../../config/env.js';
+import { queueNames } from '../../../infrastructure/queue-registry.js';
 import { AppError } from '../../../errors/app-error.js';
 import { enforceRateLimit } from '../../../infrastructure/rate-limit.js';
 import { requireAdmin } from '../../admin/auth/require-admin.js';
@@ -15,7 +16,7 @@ import { chatRequestSchema } from '../conversation.schemas.js';
 import { conversationChannels } from '../conversation.types.js';
 
 export async function chatRoutes(app: FastifyInstance): Promise<void> {
-  const chat = createChatService(app.prisma, app.log);
+  const chat = createChatService(app.prisma, app.log, app.queues[queueNames.customerFollowups] as any);
 
   app.post(
     '/api/ai/chat',

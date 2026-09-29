@@ -121,21 +121,28 @@ test('direct order intent creates a draft and collects one missing field at a ti
   let created = false;
   const service = new OrderConversationService(conversationOrders({ createDraftOrder: async () => { created = true; return { id: 'order-1', draftContext: { productIds: [6238] }, status: 'DRAFT', items: [] }; } }) as never);
   const result = await service.handle({ ...input, message: 'একটা চাই', productIds: [6238] });
-  assert.equal(created, true); assert.ok(result); assert.equal(result.orderAction.type, 'create_order');
+  assert.equal(created, true); assert.ok(result); assert.equal(result.orderAction?.type, 'create_order');
 });
 test('resolved image product context can seed a validated draft', async () => {
   let websiteProductId = 0;
   const service = new OrderConversationService(conversationOrders({ addOrderItem: async (_id: string, item: { websiteProductId: number }) => { websiteProductId = item.websiteProductId; } }) as never);
-  const result = await service.handle({ ...input, message: 'এই ছবিরটা M size order' }); assert.equal(websiteProductId, 6238); assert.equal(result?.orderAction.orderId, 'order-1');
+  const result = await service.handle({ ...input, message: 'এই ছবিরটা M size order' }); assert.equal(websiteProductId, 6238); assert.equal(result?.orderAction?.orderId, 'order-1');
 });
 test('resolved voice product context can seed a validated draft', async () => {
   let size = '';
   const service = new OrderConversationService(conversationOrders({ addOrderItem: async (_id: string, item: { size: string }) => { size = item.size; } }) as never);
   await service.handle({ ...input, message: 'TX170 M size অর্ডার' }); assert.equal(size, 'M');
 });
+test('reorder creates a new draft and revalidates previous items through current Order Engine data', async () => {
+  let selected = 0;
+  const previous = { id: 'old', status: 'SUBMITTED', createdAt: new Date(), items: [{ websiteProductId: 6238, variationSize: 'L', quantity: 1, productName: 'Polo' }] };
+  const service = new OrderConversationService(conversationOrders({ getRecentOrdersForCustomer: async () => [previous], addOrderItem: async (_id: string, item: { websiteProductId: number }) => { selected = item.websiteProductId; } }) as never);
+  const result = await service.handle({ ...input, message: 'ager ta abar nibo', productIds: [] });
+  assert.equal(selected, 6238); assert.equal(result?.orderAction?.type, 'create_order');
+});
 test('order conversation asks only for the first missing customer field', async () => {
   const service = new OrderConversationService(conversationOrders() as never);
-  const result = await service.handle(input); assert.match(result?.reply ?? '', /নাম/); assert.equal(result?.orderAction.type, 'create_order');
+  const result = await service.handle(input); assert.match(result?.reply ?? '', /নাম/); assert.equal(result?.orderAction?.type, 'create_order');
 });
 test('short confirmation is accepted only while awaiting confirmation', async () => {
   let confirmed = false;
@@ -153,7 +160,7 @@ test('customer can cancel an awaiting confirmation', async () => {
   let cancelled = false;
   const awaiting = { id: 'order-1', status: 'AWAITING_CONFIRMATION', confirmationStatus: 'PENDING', draftContext: {}, items: [] };
   const service = new OrderConversationService(conversationOrders({ getActiveOrderForConversation: async () => awaiting, cancelOrder: async () => { cancelled = true; } }) as never);
-  const result = await service.handle({ ...input, message: 'cancel', productIds: [] }); assert.equal(cancelled, true); assert.equal(result?.orderAction.type, 'cancel_order');
+  const result = await service.handle({ ...input, message: 'cancel', productIds: [] }); assert.equal(cancelled, true); assert.equal(result?.orderAction?.type, 'cancel_order');
 });
 
 test('correction reopens confirmation and requires renewed validation', async () => {
@@ -170,7 +177,7 @@ test('correction reopens confirmation and requires renewed validation', async ()
   }) as never);
   const result = await service.handle({ ...input, message: 'M এর বদলে L হবে', productIds: [] });
   assert.equal(reopened, true); assert.equal(removed, true); assert.equal(replacementSize, 'L');
-  assert.equal(result?.orderAction.type, 'update_order');
+  assert.equal(result?.orderAction?.type, 'update_order');
 });
 
 test('order state machine rejects invalid terminal transitions', async () => {

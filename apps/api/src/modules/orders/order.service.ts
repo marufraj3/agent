@@ -19,14 +19,17 @@ import {
 } from './website-order-api.client.js';
 
 const transitions: Record<OrderStatusName, OrderStatusName[]> = {
-  DRAFT: ['AWAITING_INFORMATION', 'AWAITING_CONFIRMATION', 'CANCELLED'],
-  AWAITING_INFORMATION: ['DRAFT', 'AWAITING_CONFIRMATION', 'CANCELLED'],
-  AWAITING_CONFIRMATION: ['AWAITING_INFORMATION', 'CONFIRMED', 'CANCELLED'],
+  DRAFT: ['AWAITING_INFORMATION', 'AWAITING_CONFIRMATION', 'ABANDONED', 'CANCELLED'],
+  AWAITING_INFORMATION: ['DRAFT', 'AWAITING_CONFIRMATION', 'ABANDONED', 'CANCELLED'],
+  AWAITING_CONFIRMATION: ['AWAITING_INFORMATION', 'CONFIRMED', 'ABANDONED', 'CANCELLED'],
   CONFIRMED: ['AWAITING_CONFIRMATION', 'SUBMITTED', 'FAILED'],
   SUBMITTED: ['COMPLETED'],
   COMPLETED: [],
   FAILED: ['CONFIRMED', 'CANCELLED'],
+  ABANDONED: ['AWAITING_INFORMATION', 'EXPIRED', 'CANCELLED'],
+  EXPIRED: [],
   CANCELLED: [],
+  RETURNED: [],
 };
 
 interface CreateDraftOrderInput {
@@ -113,12 +116,30 @@ export class OrderService {
     });
   }
 
+  getRecentOrdersForCustomer(customerId: string, limit = 10) {
+    return this.db.order.findMany({ where: { customerId }, include: { items: true }, orderBy: { createdAt: 'desc' }, take: Math.min(Math.max(limit, 1), 20) });
+  }
+
   getActiveOrderForConversation(conversationId: string) {
     return this.db.order.findFirst({
       where: { conversationId, status: { in: [...openOrderStatuses] } },
       include: { items: true },
       orderBy: { updatedAt: 'desc' },
     });
+  }
+
+  async markOrderAbandoned(orderId: string) {
+    const order = await this.getOrder(orderId);
+    if (!order || !['DRAFT','AWAITING_INFORMATION','AWAITING_CONFIRMATION'].includes(order.status)) return order;
+    await this.transitionOrder(orderId, 'ABANDONED');
+    return this.getOrder(orderId);
+  }
+
+  async resumeAbandonedOrder(orderId: string) {
+    const order = await this.getOrder(orderId);
+    if (!order || order.status !== 'ABANDONED') return order;
+    await this.transitionOrder(orderId, 'AWAITING_INFORMATION');
+    return this.getOrder(orderId);
   }
 
   async addOrderItem(orderId: string, input: AddOrderItemInput) {
@@ -354,7 +375,7 @@ export class OrderService {
   async cancelOrder(orderId: string) {
     const order = await this.getOrder(orderId);
     if (!order) throw new OrderEngineError('Order not found', 'ORDER_NOT_FOUND', 404);
-    if (!['DRAFT', 'AWAITING_INFORMATION', 'AWAITING_CONFIRMATION', 'FAILED'].includes(order.status)) {
+    if (!['DRAFT', 'AWAITING_INFORMATION', 'AWAITING_CONFIRMATION', 'ABANDONED', 'FAILED'].includes(order.status)) {
       throw new OrderEngineError('Order cannot be cancelled in its current state', 'INVALID_ORDER_TRANSITION');
     }
     return this.db.$transaction(async (tx: any) => {

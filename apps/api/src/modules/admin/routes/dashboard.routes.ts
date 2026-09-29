@@ -58,6 +58,11 @@ export async function dashboardRoutes(app: FastifyInstance) {
         lastSync,
         database,
         redis,
+        pendingFollowUps,
+        sentFollowUps,
+        cancelledFollowUps,
+        failedFollowUps,
+        abandonedOrders,
       ] = await Promise.all([
         db.conversation.count({ where: { createdAt } }),
         db.message.count({
@@ -100,6 +105,11 @@ export async function dashboardRoutes(app: FastifyInstance) {
           .ping()
           .then(() => "up")
           .catch(() => "down"),
+        db.followUp.count({ where: { status: "PENDING" } }),
+        db.followUp.count({ where: { status: "SENT", sentAt: createdAt } }),
+        db.followUp.count({ where: { status: "CANCELLED" } }),
+        db.followUp.count({ where: { status: { in: ["FAILED", "BLOCKED", "NOT_ELIGIBLE"] } } }),
+        db.order.count({ where: { status: "ABANDONED" } }),
       ]);
       const orderStats = Object.fromEntries(
         orderGroups.map((row: any) => [
@@ -115,7 +125,7 @@ export async function dashboardRoutes(app: FastifyInstance) {
         if (Number.isFinite(value)) latency += value;
       }
       const workers = await Promise.all(
-        [queueNames.productSync, queueNames.messengerEvents].map(async (name) =>
+        [queueNames.productSync, queueNames.messengerEvents, queueNames.customerFollowups].map(async (name) =>
           Boolean(
             await app.redis.get(`worker:heartbeat:${name}`).catch(() => null),
           ),
@@ -177,6 +187,7 @@ export async function dashboardRoutes(app: FastifyInstance) {
               ? Math.round(latency / aiLogs.length)
               : 0,
           },
+          automation: { pendingFollowUps, sentToday: sentFollowUps, cancelled: cancelledFollowUps, failed: failedFollowUps, abandonedOrders },
           orders: {
             draft: orderStats.draft ?? 0,
             awaitingInformation: orderStats.awaiting_information ?? 0,
@@ -186,6 +197,9 @@ export async function dashboardRoutes(app: FastifyInstance) {
             completed: orderStats.completed ?? 0,
             cancelled: orderStats.cancelled ?? 0,
             failed: orderStats.failed ?? 0,
+            abandoned: orderStats.abandoned ?? 0,
+            expired: orderStats.expired ?? 0,
+            returned: orderStats.returned ?? 0,
           },
         },
       };

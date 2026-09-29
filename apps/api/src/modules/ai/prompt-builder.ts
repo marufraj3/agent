@@ -7,7 +7,7 @@ export interface PromptBuilderInput {
   knowledgeBase: ActiveKnowledgeBase;
   settings: BusinessSettings;
   products: AIProductContext[];
-  customer?: { name?: string | null; language?: string | null };
+  customer?: { name?: string | null; language?: string | null; preferredSize?: string | null; preferredCategory?: string | null; preferredColor?: string | null };
   conversationSummary?: Record<string, unknown> | null;
   salesState?: string | null;
   history: ConversationMessage[];
@@ -90,6 +90,7 @@ Detected language style: ${input.detectedLanguage}
 CUSTOMER INFO
 - Name: ${input.customer?.name ?? 'not provided'}
 - Preferred language: ${input.customer?.language ?? 'not provided'}
+- Explicit preferences (suggest only; never finalize without confirmation): size=${input.customer?.preferredSize ?? 'none'}, category=${input.customer?.preferredCategory ?? 'none'}, color=${input.customer?.preferredColor ?? 'none'}
 - Sales state: ${input.salesState ?? 'DISCOVERY'}
 - Structured summary: ${JSON.stringify(input.conversationSummary ?? {})}
 

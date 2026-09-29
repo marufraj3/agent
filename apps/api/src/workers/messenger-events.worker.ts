@@ -12,6 +12,7 @@ import {
 import { MessengerSender } from '../modules/channels/messenger/messenger.sender.js';
 import { MessengerProcessingError, MessengerService } from '../modules/channels/messenger/messenger.service.js';
 import type { MessengerJobData } from '../modules/channels/messenger/messenger.types.js';
+import { createFollowUpQueue } from '../modules/automation/follow-up.queue.js';
 
 const logger = pino({
   level: env.LOG_LEVEL,
@@ -22,11 +23,12 @@ const logger = pino({
 });
 const connection = createRedisConnection();
 const controlQueue = createMessengerEventQueue();
+const followUpQueue = createFollowUpQueue();
 await Promise.all([prisma.$connect(), controlQueue.setGlobalConcurrency(1)]);
 const stopHeartbeat = startWorkerHeartbeat(connection, MESSENGER_QUEUE_NAME);
 const service = new MessengerService(
   prisma,
-  createChatService(prisma, logger as any),
+  createChatService(prisma, logger as any, followUpQueue),
   new MessengerSender(getMessengerConfig()),
   connection,
 );
@@ -55,7 +57,7 @@ async function shutdown(signal: string) {
   logger.info({ signal }, 'Stopping Messenger worker');
   await worker.close();
   await stopHeartbeat();
-  await Promise.allSettled([controlQueue.close(), connection.quit(), prisma.$disconnect()]);
+  await Promise.allSettled([controlQueue.close(), followUpQueue.close(), connection.quit(), prisma.$disconnect()]);
   process.exit(0);
 }
 process.once('SIGINT', () => void shutdown('SIGINT'));

@@ -17,6 +17,9 @@ type D = {
   metadata: unknown;
   createdAt: string;
   updatedAt: string;
+  journeyState: string;
+  automationOptOut: boolean;
+  activities: Array<{ id: string; type: string; summary: string; createdAt: string; conversationId: string | null; orderId: string | null }>;
   conversations: Array<{
     id: string;
     channel: string;
@@ -107,6 +110,8 @@ export default function Detail() {
                 v={`${data.platform ?? "—"} / ${data.platformUserId ?? "—"}`}
               />
               <Info k="Language" v={data.language} />
+              <Info k="Journey" v={data.journeyState} />
+              <Info k="Automation" v={data.automationOptOut ? "Opted out" : "Active"} />
               <Info
                 k="First Seen"
                 v={new Date(data.createdAt).toLocaleString()}
@@ -123,6 +128,9 @@ export default function Detail() {
             </Panel>
           </div>
           <div className="space-y-6 lg:col-span-2">
+            <Panel title="Customer Timeline">
+              {data.activities.length ? data.activities.map((a) => <div key={a.id} className="flex gap-4 border-b py-3 last:border-0"><time className="w-20 shrink-0 text-xs text-stone-500">{new Date(a.createdAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</time><div><p className="text-sm font-medium">{a.summary}</p><p className="text-xs text-stone-400">{a.type.replaceAll("_", " ")}</p></div></div>) : <p className="text-stone-500">No tracked activity yet.</p>}
+            </Panel>
             <Panel title={`Conversations (${data._count.conversations})`}>
               {data.conversations.map((c) => (
                 <Link

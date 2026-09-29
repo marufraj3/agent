@@ -8,6 +8,7 @@ const navigation = [
   { label: "Inbox", href: "/admin/inbox" },
   { label: "Customers", href: "/admin/customers" },
   { label: "Orders", href: "/admin/orders" },
+  { label: "Automation", href: "/admin/automation/followups" },
   { label: "Products", href: "/admin/products" },
   { label: "Knowledge Base", href: "/admin/knowledge-base" },
   { label: "Settings", href: "/admin/settings" },

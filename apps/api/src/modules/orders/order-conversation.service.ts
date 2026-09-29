@@ -73,10 +73,23 @@ function issuePrompt(issue: OrderValidationIssue): { reply: string; field: Order
 export class OrderConversationService {
   constructor(private readonly orders: DraftOrderTool, private readonly products?: Pick<ProductReadTool, 'searchProducts'>) {}
 
-  async handle(input: OrderConversationInput): Promise<OrderConversationResponse | null> {
+  async handle(input: OrderConversationInput): Promise<AIResponse | null> {
     let order = await this.orders.getActiveOrderForConversation(input.conversationId);
+    if (order?.status === 'ABANDONED') order = await this.orders.resumeAbandonedOrder(order.id);
     let created = false;
     const message = input.message.trim();
+    const recentOrders = !order && /(?:order.*(?:status|obostha)|অর্ডার.*(?:অবস্থা|কোথায়)|last order|ager order|আগের.*অর্ডার|আজকের অর্ডার|same product|আগেরটা আবার|abar nibo|reorder)/iu.test(message)
+      ? await this.orders.getRecentOrdersForCustomer(input.customer.id, 10) : [];
+    if (!order && /(?:order.*(?:status|obostha)|অর্ডার.*(?:অবস্থা|কোথায়)|last order|ager order|আগের.*অর্ডার|আজকের অর্ডার)/iu.test(message)) {
+      const code = message.match(/\b[A-Za-z]{2,}\d+[A-Za-z0-9-]*\b/)?.[0]?.toLowerCase();
+      const today = /আজকের|ajker|today/i.test(message);
+      const matches = recentOrders.filter((candidate:any) => code ? candidate.externalOrderId?.toLowerCase() === code || candidate.orderCode?.toLowerCase() === code || candidate.items.some((item:any) => item.productCode.toLowerCase().includes(code)) : !today || new Date(candidate.createdAt).toDateString() === new Date().toDateString());
+      if (matches.length === 0) return this.statusResponse('কোনো matching local order খুঁজে পাইনি। Order ID দিলে আবার দেখব।');
+      if (code && matches.length > 1) return this.statusResponse('এই reference-এ একাধিক order আছে। কোন Order ID-টির কথা বলছেন?');
+      const selected = matches[0]!;
+      return this.statusResponse(`আপনার ${selected.externalOrderId ?? selected.orderCode ?? selected.id.slice(0,8)} order-এর local status: ${selected.status}।`);
+    }
+    const reorderRequested = !order && /(?:same product|আগেরটা আবার|ager ta abar|abar nibo|reorder|last order er moto)/iu.test(message);
     const messageEntities = extractEntities(message);
     let productIds = input.productIds;
     if (!order && productIds.length === 0 && this.products && (messageEntities.productCode || messageEntities.productName)) {
@@ -140,8 +153,20 @@ export class OrderConversationService {
       }
     }
 
-    if (!order && !orderIntentPattern.test(message)) return null;
+    if (!order && !orderIntentPattern.test(message) && !reorderRequested) return null;
     const size = extractSize(message);
+
+    if (!order && reorderRequested) {
+      const previous = recentOrders.find((candidate:any) => ['SUBMITTED','COMPLETED','CANCELLED'].includes(candidate.status));
+      if (!previous) return this.statusResponse('Reorder করার মতো আগের কোনো order খুঁজে পাইনি।');
+      created = true;
+      order = await this.orders.createDraftOrder({ customerId: input.customer.id, conversationId: input.conversationId, customer: { name: input.customer.name, phone: input.customer.phone, address: input.customer.address }, draftContext: { requestedField: 'product' } });
+      for (const item of previous.items) {
+        try { await this.orders.addOrderItem(order.id, { websiteProductId: item.websiteProductId, size: item.variationSize, quantity: item.quantity }); }
+        catch { await this.orders.cancelOrder(order.id); return this.statusResponse(`${item.productName} ${item.variationSize} এখন current stock-এ available নয়। অন্য size/product বলবেন?`); }
+      }
+      order = await this.orders.getOrder(order.id);
+    }
 
     if (!order) {
       created = true;
@@ -255,6 +280,10 @@ export class OrderConversationService {
     return value && typeof value === 'object' && !Array.isArray(value)
       ? (value as OrderDraftContext)
       : {};
+  }
+
+  private statusResponse(reply: string): AIResponse {
+    return { reply, intent: 'order_status', confidence: 1, language: 'bn', entities: extractEntities(''), requiresHuman: false, action: 'reply', productIds: [], products: [], source: 'rules' };
   }
 
   private response(

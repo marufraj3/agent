@@ -32,6 +32,9 @@ export function classifyIntent(message: string): AIIntent {
   if (/^(hi|hello|hey|assalamu alaikum|assalamualaikum|salam|হাই|হ্যালো|আসসালামু আলাইকুম)$/u.test(normalized)) {
     return 'greeting';
   }
+  if (/(?:মনে করিয়ে|জানাবেন|follow.?up|remind|পরে order|পরে অর্ডার)/iu.test(normalized)) return 'follow_up_request';
+  if (/(?:আগেরটা আবার|same product|last order er moto|reorder)/iu.test(normalized)) return 'reorder_intent';
+  if (/(?:order.*(?:status|obostha)|অর্ডার.*(?:অবস্থা|কোথায়)|last order|ager order|আজকের অর্ডার)/iu.test(normalized)) return 'order_status';
   if (/\b(human|agent|representative|customer care|মানুষ|হিউম্যান|প্রতিনিধি)\b/iu.test(normalized)) {
     return 'human_request';
   }
