@@ -3,6 +3,7 @@ import { resolveEffectivePrice } from '../products/effective-price.js';
 import type { AIResponse } from './ai.types.js';
 import type { AIRouteDecision } from './ai-router.js';
 import type { AIProductContext } from './product-context.service.js';
+import { extractEntities } from './entity-extractor.js';
 
 function productReferences(products: AIProductContext[]) {
   return products.map(({ product }) => ({
@@ -51,6 +52,8 @@ export class RuleResponseService {
     const references = productReferences(products);
     const base = {
       intent: decision.intent,
+      language: decision.language,
+      entities: extractEntities(message),
       action: null,
       productIds,
       products: references,

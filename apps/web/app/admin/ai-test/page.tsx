@@ -34,6 +34,7 @@ type ChatItem = {
   audioPreview?: string;
   recognition?: ImageRecognition;
   transcription?: Transcription;
+  diagnostic?: { entities?: Record<string, unknown>; products?: Array<{ productName: string; productCode: string }>; debug?: { latencyMs: number; model: string | null; toolCalls: Array<{ tool: string; status: string; durationMs: number }> } };
 };
 type Transcription = {
   text: string;
@@ -48,6 +49,9 @@ type ChatResult = {
   confidence: number;
   requiresHuman: boolean;
   action: string | null;
+  entities?: Record<string, unknown>;
+  products?: Array<{ productName: string; productCode: string }>;
+  debug?: { latencyMs: number; model: string | null; toolCalls: Array<{ tool: string; status: string; durationMs: number }> };
   imageRecognition?: ImageRecognition;
   transcription?: Transcription;
 };
@@ -205,6 +209,7 @@ export default function AiTestPage() {
           detail: `${response.data.intent} · ${Math.round(response.data.confidence * 100)}% · ${response.data.requiresHuman ? 'handover required' : 'AI handling'}${response.data.action ? ` · ${response.data.action}` : ''}`,
           recognition: response.data.imageRecognition,
           transcription: response.data.transcription,
+          diagnostic: { entities: response.data.entities, products: response.data.products, debug: response.data.debug },
         },
       ]);
     } catch (caught) {
@@ -252,6 +257,7 @@ export default function AiTestPage() {
               <p className="whitespace-pre-wrap leading-6">{item.content}</p>
               {item.transcription ? <div className="mt-3 rounded-xl border border-amber-200 bg-white/80 p-3 text-xs text-stone-700"><p className="font-semibold">Transcription</p><p className="mt-1 text-sm">{item.transcription.text}</p><p className="mt-1">{item.transcription.language} · {Math.round(item.transcription.confidence * 100)}% confidence{item.transcription.duration !== null ? ` · ${item.transcription.duration}s` : ''}</p></div> : null}
               {item.detail ? <p className="mt-2 text-xs text-amber-800">{item.detail}</p> : null}
+              {item.diagnostic ? <details className="mt-3 rounded-xl border border-amber-200 bg-white/80 p-3 text-xs text-stone-700"><summary className="cursor-pointer font-semibold">AI debug</summary><p className="mt-2">Entities: {JSON.stringify(item.diagnostic.entities ?? {})}</p><p className="mt-1">Products: {item.diagnostic.products?.map((product) => `${product.productName} (${product.productCode})`).join(', ') || 'none'}</p><p className="mt-1">Model: {item.diagnostic.debug?.model ?? 'local'} · {item.diagnostic.debug?.latencyMs ?? 0}ms</p><p className="mt-1">Tools: {item.diagnostic.debug?.toolCalls.map((tool) => `${tool.tool} ${tool.status} (${tool.durationMs}ms)`).join(' · ') || 'none'}</p></details> : null}
               {match ? <div className="mt-3 rounded-xl border border-amber-200 bg-white/80 p-3 text-xs text-stone-700">
                 <p className="font-semibold">{match.product.productName} · {match.product.productCode}</p>
                 <p className="mt-1">Match {Math.round(match.score * 100)}% · {match.reasons.join(', ')}</p>

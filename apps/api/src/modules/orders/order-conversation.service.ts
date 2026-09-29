@@ -1,5 +1,6 @@
 import type { AIResponse } from '../ai/ai.types.js';
-import type { OrderService } from './order.service.js';
+import { extractEntities } from '../ai/entity-extractor.js';
+import type { DraftOrderTool, ProductReadTool } from '../ai/sales-tool.interfaces.js';
 import {
   OrderEngineError,
   type DeliveryLocationName,
@@ -21,9 +22,9 @@ export interface OrderConversationResponse extends AIResponse {
   };
 }
 
-const orderIntentPattern = /(?:অর্ডার|order|কিনতে চাই|নিতে চাই|নিব|চাই|দেন|den|nen|want (?:it|this|one)|buy)/iu;
-const confirmationPattern = /^(?:জি|জ্বি|হ্যাঁ|হ্যা|yes|confirm|confirmed|ঠিক আছে|ঠিকাছে|okay|ok)$/iu;
-const cancellationPattern = /^(?:না|না থাক|বাদ দিন|cancel|no|never mind|nevermind)$/iu;
+const orderIntentPattern = /(?:অর্ডার|order|কিনতে চাই|নিতে চাই|নিব|(?:এটা|ওটা|এইটা|একটা)\s*(?:চাই|দেন)|want (?:it|this|one|[A-Za-z]{2,}-?\d+)|[A-Za-z]{2,}-?\d+.*(?:চাই|নিব)|buy|place (?:the |an )?order)/iu;
+const confirmationPattern = /^(?:জি(?:\s+ঠিক আছে)?|জ্বি|হ্যাঁ|হ্যা|yes(?:\s+confirm)?|confirm(?:ed)?|ঠিক আছে|ঠিকাছে|okay|ok|অর্ডার করুন|করুন)$/iu;
+const cancellationPattern = /^(?:না|না থাক|লাগবে না|বাদ দিন|বাতিল করুন|cancel(?: it| order)?|no|never mind|nevermind)$/iu;
 
 function normalizeDigits(value: string) {
   const bn = '০১২৩৪৫৬৭৮৯';
@@ -39,9 +40,10 @@ function extractQuantity(message: string): number {
 }
 
 function extractSize(message: string): string | undefined {
-  const match = message.match(/(?:size\s*)?(xxxl|3xl|xxl|2xl|xl|xs|s|m|l)(?:\s*size)?\b/iu);
-  if (!match) return undefined;
-  return match[1]!.toUpperCase().replace('2XL', 'XXL').replace('3XL', 'XXXL');
+  const matches = [...message.matchAll(/(?:size\s*)?(xxxl|3xl|xxl|2xl|xl|xs|s|m|l)(?:\s*size)?\b/giu)];
+  const value = matches.at(-1)?.[1];
+  if (!value) return undefined;
+  return value.toUpperCase().replace('2XL', 'XXL').replace('3XL', 'XXXL');
 }
 
 function extractPhone(message: string): string | undefined {
@@ -69,14 +71,26 @@ function issuePrompt(issue: OrderValidationIssue): { reply: string; field: Order
 }
 
 export class OrderConversationService {
-  constructor(private readonly orders: OrderService) {}
+  constructor(private readonly orders: DraftOrderTool, private readonly products?: Pick<ProductReadTool, 'searchProducts'>) {}
 
   async handle(input: OrderConversationInput): Promise<OrderConversationResponse | null> {
     let order = await this.orders.getActiveOrderForConversation(input.conversationId);
     let created = false;
     const message = input.message.trim();
+    const messageEntities = extractEntities(message);
+    let productIds = input.productIds;
+    if (!order && productIds.length === 0 && this.products && (messageEntities.productCode || messageEntities.productName)) {
+      const candidates = await this.products.searchProducts(messageEntities.productCode ?? messageEntities.productName!, 5);
+      const normalizedCode = messageEntities.productCode?.replace(/[^a-z0-9]/gi, '').toLowerCase();
+      const exact = candidates.filter((product) => normalizedCode
+        ? product.productCode.replace(/[^a-z0-9]/gi, '').toLowerCase().startsWith(normalizedCode)
+        : product.productName.toLowerCase() === messageEntities.productName?.toLowerCase());
+      if (exact.length === 1) productIds = [exact[0]!.id];
+    }
+    let reopenedForCorrection = false;
 
     if (order?.status === 'AWAITING_CONFIRMATION') {
+      const correctionRequested = messageEntities.correction || messageEntities.size !== null || messageEntities.quantity !== null || messageEntities.phone !== null || messageEntities.customerName !== null || messageEntities.address !== null || messageEntities.deliveryLocation !== null;
       if (confirmationPattern.test(message)) {
         await this.orders.confirmOrder(order.id, message);
         try {
@@ -94,6 +108,7 @@ export class OrderConversationService {
               'confirm_order',
               order.id,
               'order_intent',
+              true,
             );
           }
           if (error instanceof OrderEngineError && error.code === 'ORDER_SUBMISSION_FAILED') {
@@ -102,6 +117,7 @@ export class OrderConversationService {
               'confirm_order',
               order.id,
               'order_intent',
+              true,
             );
           }
           throw error;
@@ -111,17 +127,21 @@ export class OrderConversationService {
         await this.orders.cancelOrder(order.id);
         return this.response('অর্ডারটি বাতিল করা হয়েছে।', 'cancel_order', order.id, 'order_intent');
       }
-      return this.response(
-        'অর্ডারটি নিশ্চিত করতে শুধু “জি” বা “Confirm” বলুন। কোনো তথ্য পরিবর্তন করতে চাইলে সেটি স্পষ্ট করে লিখুন।',
-        'request_order_information',
-        order.id,
-        'order_intent',
-      );
+      if (correctionRequested) {
+        order = await this.orders.reopenForCorrection(order.id);
+        reopenedForCorrection = true;
+      } else {
+        return this.response(
+          'অর্ডারটি নিশ্চিত করতে শুধু “জি” বা “Confirm” বলুন। কোনো তথ্য পরিবর্তন করতে চাইলে সেটি স্পষ্ট করে লিখুন।',
+          'request_order_information',
+          order.id,
+          'order_intent',
+        );
+      }
     }
 
     if (!order && !orderIntentPattern.test(message)) return null;
     const size = extractSize(message);
-    if (!order && (input.productIds.length !== 1 || !size)) return null;
 
     if (!order) {
       created = true;
@@ -133,7 +153,7 @@ export class OrderConversationService {
           phone: input.customer.phone,
           address: input.customer.address,
         },
-        draftContext: { productIds: input.productIds, size, quantity: extractQuantity(message) },
+        draftContext: { productIds, size, quantity: extractQuantity(message) },
       });
     }
 
@@ -143,14 +163,21 @@ export class OrderConversationService {
     }
 
     const context = this.context(order.draftContext);
+    const entities = messageEntities;
     const phone = extractPhone(message);
     const location = extractLocation(message);
-    if (phone) await this.orders.updateCustomerInformation(order.id, { phone });
+    const customerUpdates = {
+      ...(entities.customerName ? { name: entities.customerName } : {}),
+      ...(phone ? { phone } : {}),
+      ...(entities.address ? { address: entities.address } : {}),
+    };
+    if (Object.keys(customerUpdates).length > 0) await this.orders.updateCustomerInformation(order.id, customerUpdates);
     if (location) await this.orders.setDeliveryLocation(order.id, location);
-    if (context.requestedField === 'name' && !phone && !location && message.length <= 255) {
+    if (context.requestedField === 'name' && !entities.customerName && !phone && !location && message.length <= 255) {
       await this.orders.updateCustomerInformation(order.id, { name: message });
     } else if (
       context.requestedField === 'address' &&
+      !entities.address &&
       !phone &&
       message.length <= 2_000 &&
       !/^(?:dhaka|ঢাকা|inside dhaka|outside dhaka)$/iu.test(message)
@@ -159,7 +186,17 @@ export class OrderConversationService {
     }
 
     order = await this.orders.getOrder(order.id);
-    const selectedProductId = input.productIds.length === 1 ? input.productIds[0] : context.productIds?.[0];
+    if (reopenedForCorrection && order.items[0]) {
+      const item = order.items[0];
+      if (size && size.toLowerCase() !== item.variationSize.toLowerCase()) {
+        await this.orders.removeOrderItem(order.id, item.id);
+        await this.orders.addOrderItem(order.id, { websiteProductId: item.websiteProductId, size, quantity: entities.quantity ?? item.quantity });
+      } else if (entities.quantity && entities.quantity !== item.quantity) {
+        await this.orders.updateOrderItem(order.id, item.id, entities.quantity);
+      }
+      order = await this.orders.getOrder(order.id);
+    }
+    const selectedProductId = productIds.length === 1 ? productIds[0] : context.productIds?.[0];
     const selectedSize = size ?? context.size ?? undefined;
     const addingAnother = /(?:আরেক|আরও|add another|also add|another)/iu.test(message);
     if ((order.items.length === 0 || addingAnother) && selectedProductId && selectedSize) {
@@ -172,7 +209,10 @@ export class OrderConversationService {
 
     const issues = await this.orders.validateOrder(order.id);
     if (issues.length > 0) {
-      const next = issuePrompt(issues[0]!);
+      const firstIssue = issues[0]!;
+      const next = firstIssue.code === 'MISSING_ITEMS' && selectedProductId && !selectedSize
+        ? issuePrompt({ code: 'MISSING_OR_INVALID_SIZE', message: 'Size is required' })
+        : issuePrompt(firstIssue);
       await this.orders.updateDraftContext(order.id, {
         ...context,
         productIds: selectedProductId ? [selectedProductId] : context.productIds,
@@ -222,13 +262,16 @@ export class OrderConversationService {
     type: OrderConversationResponse['orderAction']['type'],
     orderId: string,
     intent: 'order_intent',
+    requiresHuman = false,
   ): OrderConversationResponse {
     return {
       reply,
       intent,
       confidence: 1,
-      requiresHuman: false,
-      action: type,
+      language: 'bn',
+      entities: extractEntities(''),
+      requiresHuman,
+      action: requiresHuman ? 'handover' : type,
       orderAction: { type, orderId },
       productIds: [],
       products: [],

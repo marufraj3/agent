@@ -7,6 +7,7 @@ import { HumanHandoverService } from '../handovers/human-handover.service.js';
 import { createImageProductService } from '../images/image.factory.js';
 import { OrderConversationService } from '../orders/order-conversation.service.js';
 import { OrderService } from '../orders/order.service.js';
+import { ProductCatalogService } from '../products/product-catalog.service.js';
 import { WebsiteOrderApiClient } from '../orders/website-order-api.client.js';
 import { ChatService } from './chat.service.js';
 
@@ -20,8 +21,10 @@ export function createChatService(prisma: PrismaClient, logger: FastifyBaseLogge
     createVoiceUnderstandingService(prisma),
     new OrderConversationService(
       new OrderService(prisma, new WebsiteOrderApiClient(env.ORDER_API_TIMEOUT_MS), logger),
+      new ProductCatalogService(prisma),
     ),
     new HumanHandoverService(prisma),
     env.AI_MAX_CONSECUTIVE_FAILURES,
+    env.AI_CONFIDENCE_LOW,
   );
 }

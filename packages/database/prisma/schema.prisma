@@ -221,6 +221,9 @@ model Conversation {
   assignedTo            String?            @map("assigned_to") @db.VarChar(100)
   unreadForAdmin        Boolean            @default(false) @map("unread_for_admin")
   consecutiveAiFailures Int                @default(0) @map("consecutive_ai_failures")
+  salesState            String             @default("DISCOVERY") @map("sales_state") @db.VarChar(50)
+  conversationSummary   Json?              @map("conversation_summary") @db.JsonB
+  summaryUpdatedAt      DateTime?          @map("summary_updated_at")
   lastMessageAt         DateTime           @default(now()) @map("last_message_at")
   createdAt     DateTime           @default(now()) @map("created_at")
   updatedAt     DateTime           @updatedAt @map("updated_at")
@@ -234,6 +237,7 @@ model Conversation {
   @@index([status, assignedTo, lastMessageAt])
   @@index([unreadForAdmin, lastMessageAt])
   @@index([channel, status, lastMessageAt])
+  @@index([salesState, lastMessageAt])
   @@index([lastMessageAt])
   @@map("conversations")
 }

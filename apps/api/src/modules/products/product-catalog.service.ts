@@ -138,6 +138,16 @@ function toAvailability(product: ProductWithVariations): ProductAvailability {
   };
 }
 
+export interface ProductRecommendationFilters {
+  query?: string | null;
+  color?: string | null;
+  category?: string | null;
+  subCategory?: string | null;
+  minPrice?: number | null;
+  maxPrice?: number | null;
+  includePreOrder?: boolean;
+}
+
 export class ProductCatalogService {
   constructor(private readonly prisma: PrismaClient) {}
 
@@ -167,6 +177,37 @@ export class ProductCatalogService {
     });
 
     return products.map(toCatalogProduct);
+  }
+
+  async recommendProducts(filters: ProductRecommendationFilters, requestedLimit = 5): Promise<CatalogSearchProduct[]> {
+    const limit = Math.min(Math.max(requestedLimit, 3), 5);
+    const query = filters.query?.trim().slice(0, 100);
+    const products = await this.prisma.product.findMany({
+      where: {
+        presentInFeed: true,
+        ...(filters.color ? { colorName: { contains: filters.color, mode: 'insensitive' } } : {}),
+        ...(filters.category ? { categoryName: { contains: filters.category, mode: 'insensitive' } } : {}),
+        ...(filters.subCategory ? { subCategoryName: { contains: filters.subCategory, mode: 'insensitive' } } : {}),
+        ...(filters.includePreOrder === false ? { isPreOrder: false } : {}),
+        ...(query ? { OR: [
+          { productName: { contains: query, mode: 'insensitive' } }, { productCode: { contains: query, mode: 'insensitive' } },
+          { categoryName: { contains: query, mode: 'insensitive' } }, { subCategoryName: { contains: query, mode: 'insensitive' } },
+        ] } : {}),
+      },
+      include: { variations: { orderBy: [{ active: 'desc' }, { stockQuantity: 'desc' }] } },
+      orderBy: [{ updatedAt: 'desc' }],
+      take: Math.min(limit * 4, 20),
+    });
+    const effectivePrice = (product: CatalogSearchProduct) => Number(product.flashSellPrice) > 0 ? Number(product.flashSellPrice) : Number(product.discountPrice) > 0 ? Number(product.discountPrice) : Number(product.sellPrice);
+    const catalogProducts: CatalogSearchProduct[] = products.map(toCatalogProduct).filter((product: CatalogSearchProduct) =>
+      (filters.minPrice == null || effectivePrice(product) >= filters.minPrice) &&
+      (filters.maxPrice == null || effectivePrice(product) <= filters.maxPrice),
+    );
+    return catalogProducts.sort((a, b) => {
+      const availability = (product: CatalogSearchProduct) => product.variations.some((item) => item.active && item.stockQuantity > 0) ? 2 : product.isPreOrder ? 1 : 0;
+      const exactCode = (product: CatalogSearchProduct) => query && product.productCode.toLowerCase() === query.toLowerCase() ? 1 : 0;
+      return exactCode(b) - exactCode(a) || availability(b) - availability(a) || effectivePrice(a) - effectivePrice(b);
+    }).slice(0, limit);
   }
 
   async getProductByWebsiteId(websiteProductId: number): Promise<CatalogSearchProduct | null> {

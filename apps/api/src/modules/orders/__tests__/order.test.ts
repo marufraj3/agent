@@ -102,6 +102,10 @@ function conversationOrders(overrides: Record<string, unknown> = {}) {
     validateOrder: async () => [{ code: 'MISSING_NAME', message: 'name' }],
     updateDraftContext: async () => undefined,
     addOrderItem: async () => undefined,
+    updateOrderItem: async () => undefined,
+    removeOrderItem: async () => undefined,
+    reopenForCorrection: async () => ({ id: 'order-1', draftContext: {}, status: 'AWAITING_INFORMATION', items: [] }),
+    calculateOrder: async () => undefined,
     updateCustomerInformation: async () => undefined,
     setDeliveryLocation: async () => undefined,
     cancelOrder: async () => undefined,
@@ -113,10 +117,11 @@ function conversationOrders(overrides: Record<string, unknown> = {}) {
 }
 const input = { message: 'M size order', conversationId: 'conversation-1', customer: { id: 'customer-1', name: null, phone: null }, productIds: [6238] };
 
-test('broad order intent without a resolved product and size does not create a draft', async () => {
+test('direct order intent creates a draft and collects one missing field at a time', async () => {
   let created = false;
-  const service = new OrderConversationService(conversationOrders({ createDraftOrder: async () => { created = true; } }) as never);
-  assert.equal(await service.handle({ ...input, message: 'একটা চাই', productIds: [6238] }), null); assert.equal(created, false);
+  const service = new OrderConversationService(conversationOrders({ createDraftOrder: async () => { created = true; return { id: 'order-1', draftContext: { productIds: [6238] }, status: 'DRAFT', items: [] }; } }) as never);
+  const result = await service.handle({ ...input, message: 'একটা চাই', productIds: [6238] });
+  assert.equal(created, true); assert.ok(result); assert.equal(result.orderAction.type, 'create_order');
 });
 test('resolved image product context can seed a validated draft', async () => {
   let websiteProductId = 0;
@@ -149,6 +154,23 @@ test('customer can cancel an awaiting confirmation', async () => {
   const awaiting = { id: 'order-1', status: 'AWAITING_CONFIRMATION', confirmationStatus: 'PENDING', draftContext: {}, items: [] };
   const service = new OrderConversationService(conversationOrders({ getActiveOrderForConversation: async () => awaiting, cancelOrder: async () => { cancelled = true; } }) as never);
   const result = await service.handle({ ...input, message: 'cancel', productIds: [] }); assert.equal(cancelled, true); assert.equal(result?.orderAction.type, 'cancel_order');
+});
+
+test('correction reopens confirmation and requires renewed validation', async () => {
+  let reopened = false; let removed = false; let replacementSize = '';
+  const item = { id: 'item-1', websiteProductId: 6238, variationSize: 'M', quantity: 1 };
+  const awaiting = { id: 'order-1', status: 'AWAITING_CONFIRMATION', confirmationStatus: 'PENDING', draftContext: {}, items: [item] };
+  const mutable = { ...awaiting, status: 'AWAITING_INFORMATION', confirmationStatus: 'NOT_REQUESTED', items: [item] };
+  const service = new OrderConversationService(conversationOrders({
+    getActiveOrderForConversation: async () => awaiting,
+    reopenForCorrection: async () => { reopened = true; return mutable; },
+    getOrder: async () => mutable,
+    removeOrderItem: async () => { removed = true; },
+    addOrderItem: async (_id: string, value: { size: string }) => { replacementSize = value.size; },
+  }) as never);
+  const result = await service.handle({ ...input, message: 'M এর বদলে L হবে', productIds: [] });
+  assert.equal(reopened, true); assert.equal(removed, true); assert.equal(replacementSize, 'L');
+  assert.equal(result?.orderAction.type, 'update_order');
 });
 
 test('order state machine rejects invalid terminal transitions', async () => {

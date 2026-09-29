@@ -164,6 +164,18 @@ export class OrderService {
     return this.getOrder(orderId);
   }
 
+  async reopenForCorrection(orderId: string) {
+    const order = await this.getOrder(orderId);
+    if (!order || order.status !== 'AWAITING_CONFIRMATION') {
+      throw new OrderEngineError('Order is not awaiting correction', 'ORDER_NOT_EDITABLE', 409);
+    }
+    await this.db.$transaction(async (tx: any) => {
+      await tx.order.update({ where: { id: orderId }, data: { status: 'AWAITING_INFORMATION', confirmationStatus: 'NOT_REQUESTED', confirmationText: null, confirmedAt: null } });
+      await this.log(tx, 'ORDER_REOPENED_FOR_CORRECTION', orderId, {});
+    });
+    return this.getOrder(orderId);
+  }
+
   async updateOrderItem(orderId: string, itemId: string, quantity: number) {
     this.assertQuantity(quantity);
     await this.requireMutableOrder(orderId);

@@ -8,6 +8,8 @@ export interface ConversationMemoryContext {
     id: string;
     status: 'active' | 'closed' | 'human';
     channel: 'web' | 'messenger' | 'admin' | 'test';
+    salesState: string;
+    summary: Record<string, unknown> | null;
   };
   customer: {
     id: string;
@@ -86,6 +88,10 @@ export class ConversationContextService {
         id: conversation.id,
         status: conversation.status.toLowerCase() as ConversationMemoryContext['conversation']['status'],
         channel: conversation.channel.toLowerCase() as ConversationMemoryContext['conversation']['channel'],
+        salesState: conversation.salesState ?? 'DISCOVERY',
+        summary: conversation.conversationSummary && typeof conversation.conversationSummary === 'object' && !Array.isArray(conversation.conversationSummary)
+          ? conversation.conversationSummary as Record<string, unknown>
+          : null,
       },
       customer: {
         id: conversation.customer.id,

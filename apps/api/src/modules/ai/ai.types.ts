@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { extractedEntitiesSchema } from './entity-extractor.js';
 
 export const aiIntentSchema = z.enum([
   'greeting',
@@ -32,6 +33,8 @@ export const aiInputSchema = z
     language: z.enum(['auto', 'bn', 'banglish', 'en']).default('auto'),
     conversationHistory: z.array(conversationMessageSchema).max(50).default([]),
     contextProductIds: z.array(z.number().int().positive()).max(10).default([]),
+    conversationSummary: z.record(z.string(), z.unknown()).refine((value) => JSON.stringify(value).length <= 4_000, 'Conversation summary is too large').nullable().optional(),
+    salesState: z.string().trim().max(50).nullable().optional(),
     customerContext: z
       .object({
         name: z.string().trim().max(255).nullable().optional(),
@@ -50,9 +53,11 @@ export const modelResponseSchema = z
     reply: z.string().trim().min(1).max(2_000),
     intent: aiIntentSchema,
     confidence: z.number().min(0).max(1),
+    language: z.enum(['bn', 'banglish', 'en']),
+    entities: extractedEntitiesSchema,
     requiresHuman: z.boolean(),
-    action: z.string().trim().min(1).max(100).nullable(),
-    productIds: z.array(z.number().int().positive()).max(10),
+    action: z.enum(['reply', 'clarify', 'recommend', 'begin_order', 'handover', 'request_human', 'request_product_clarification', 'create_order', 'update_order', 'confirm_order', 'cancel_order', 'request_order_information', 'request_voice_clarification']).nullable(),
+    productIds: z.array(z.number().int().positive()).max(5),
   })
   .strict();
 
@@ -77,8 +82,21 @@ export interface AIOrderAction {
   orderId: string;
 }
 
+export interface AIToolCallTrace {
+  tool: string;
+  status: 'ok' | 'rejected' | 'error';
+  durationMs: number;
+  resultCount?: number;
+}
+
 export interface AIResponse extends ModelAIResponse {
   products: AIProductReference[];
   source: 'rules' | 'gemini' | 'fallback';
   orderAction?: AIOrderAction;
+  debug?: {
+    latencyMs: number;
+    model: string | null;
+    toolCalls: AIToolCallTrace[];
+    fallbackReason?: string;
+  };
 }

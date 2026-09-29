@@ -42,6 +42,8 @@ export function createAIService(prisma: PrismaClient, logger: AILogger): AIServi
     config: {
       maxHistoryMessages: env.AI_MAX_HISTORY_MESSAGES,
       maxProducts: env.AI_MAX_PRODUCTS,
+      highConfidence: env.AI_CONFIDENCE_HIGH,
+      lowConfidence: env.AI_CONFIDENCE_LOW,
     },
   });
 }

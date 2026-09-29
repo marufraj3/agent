@@ -12,6 +12,11 @@ export interface AIEvent {
   requiresHuman: boolean;
   messageLength: number;
   historyMessages: number;
+  confidence?: number;
+  action?: string | null;
+  selectedProductIds?: number[];
+  entityFields?: string[];
+  toolCalls?: Array<{ tool: string; status: string; durationMs: number }>;
   errorType?: string;
 }
 
@@ -50,6 +55,11 @@ export class SystemLogAIEventLogger implements AIEventLogger {
             requiresHuman: event.requiresHuman,
             messageLength: event.messageLength,
             historyMessages: event.historyMessages,
+            ...(event.confidence === undefined ? {} : { confidence: event.confidence }),
+            ...(event.action === undefined ? {} : { action: event.action }),
+            ...(event.selectedProductIds ? { selectedProductIds: event.selectedProductIds } : {}),
+            ...(event.entityFields ? { entityFields: event.entityFields } : {}),
+            ...(event.toolCalls ? { toolCalls: event.toolCalls } : {}),
             ...(event.errorType ? { errorType: event.errorType } : {}),
           },
         },

@@ -1,11 +1,12 @@
 import type { PrismaClient } from '@alzeena/database';
 import type { AIService } from '../ai/ai.service.js';
 import type { AIResponse } from '../ai/ai.types.js';
+import { extractEntities } from '../ai/entity-extractor.js';
 import { transcriptionSchema, type AudioInput, type Transcription } from '../audio/audio.types.js';
 import type { VoiceUnderstandingService } from '../audio/voice-understanding.service.js';
 import type { ImageProductService } from '../images/image-product.service.js';
 import type { ImageInput } from '../images/image.types.js';
-import type { HumanHandoverService } from '../handovers/human-handover.service.js';
+import type { HandoverTool } from '../ai/sales-tool.interfaces.js';
 import type { HandoverReasonName } from '../handovers/handover.types.js';
 import type { OrderConversationService } from '../orders/order-conversation.service.js';
 import { ProductCatalogService } from '../products/product-catalog.service.js';
@@ -28,6 +29,8 @@ export interface ChatInput {
   newConversation?: boolean;
   externalMessageId?: string;
   sourceMetadata?: import('./conversation.types.js').JsonMetadata;
+  /** Trusted admin-only diagnostic response; customer channels must leave this false. */
+  includeDebug?: boolean;
 }
 
 export class ConversationAccessError extends Error {
@@ -59,6 +62,12 @@ function voiceClarificationResponse(
     reply,
     intent: 'unknown',
     confidence: 0,
+    language: 'bn',
+    entities: {
+      productCode: null, productName: null, size: null, color: null, quantity: null,
+      minPrice: null, maxPrice: null, customerName: null, phone: null, address: null,
+      deliveryLocation: null, ordinalReference: null, correction: false,
+    },
     requiresHuman: false,
     action: 'request_voice_clarification',
     productIds: [],
@@ -81,8 +90,9 @@ export class ChatService {
     private readonly imageProducts?: ImageProductService,
     private readonly voice?: VoiceUnderstandingService,
     private readonly orderConversation?: OrderConversationService,
-    private readonly handovers?: HumanHandoverService,
+    private readonly handovers?: HandoverTool,
     private readonly maxConsecutiveFailures = 2,
+    private readonly lowConfidenceThreshold = 0.45,
   ) {
     this.customers = new CustomerService(prisma);
     this.conversations = new ConversationService(prisma);
@@ -293,6 +303,8 @@ export class ChatService {
         productIds: contextProductIds,
       }) ?? undefined;
 
+      if (response?.orderAction) response = { ...response, entities: extractEntities(customerMessage) };
+
       if (!response) {
         const language = ['bn', 'banglish', 'en'].includes(customer.language ?? '')
           ? (customer.language as 'bn' | 'banglish' | 'en')
@@ -304,6 +316,8 @@ export class ChatService {
           language,
           conversationHistory: memory.history,
           contextProductIds,
+          conversationSummary: memory.conversation.summary,
+          salesState: memory.conversation.salesState,
           customerContext: { name: customer.name, language: customer.language },
         });
       }
@@ -347,6 +361,8 @@ export class ChatService {
       metadata: {
         intent: response.intent,
         confidence: response.confidence,
+        language: response.language,
+        entities: response.entities,
         requiresHuman: response.requiresHuman,
         action: response.action,
         ...(response.orderAction
@@ -363,8 +379,10 @@ export class ChatService {
           productCode: product.productCode,
         })),
         source: response.source,
+        ...(response.debug ? { aiDebug: response.debug } : {}),
       },
     });
+    await this.persistSalesState(conversation.id, response, (conversation as typeof conversation & { conversationSummary?: unknown }).conversationSummary);
     if (response.requiresHuman) {
       if (this.handovers && handoverReason) {
         await this.handovers.requestHandover({
@@ -378,12 +396,14 @@ export class ChatService {
       }
     }
 
+    const { debug: _internalDebug, ...customerResponse } = response;
     return {
       conversationId: conversation.id,
       customerId: customer.id,
       conversationStatus: response.requiresHuman ? ('human' as const) : ('active' as const),
       assistantMessageId: assistantMessage.id,
-      ...response,
+      ...customerResponse,
+      ...(input.includeDebug && _internalDebug ? { debug: _internalDebug } : {}),
       products: response.products.map((product) => {
         const match = imageResult?.matches.find((item) => item.productId === product.id);
         return match
@@ -395,10 +415,51 @@ export class ChatService {
     };
   }
 
+  private async persistSalesState(conversationId: string, response: AIResponse, existing: unknown): Promise<void> {
+    const salesState = response.requiresHuman
+      ? 'HUMAN_HANDOVER'
+      : response.orderAction?.type === 'confirm_order'
+        ? 'ORDER_SUBMITTED'
+        : response.orderAction?.type === 'request_order_information'
+          ? 'CONFIRMATION'
+          : response.intent === 'order_intent'
+            ? 'ORDER_COLLECTION'
+            : response.intent === 'product_search' || response.intent === 'product_inquiry'
+              ? 'CONSIDERATION'
+              : 'DISCOVERY';
+    const previous = existing && typeof existing === 'object' && !Array.isArray(existing) ? existing as Record<string, unknown> : {};
+    const previousPreferences = previous.preferences && typeof previous.preferences === 'object' ? previous.preferences as Record<string, unknown> : {};
+    const previousKnown = previous.customerFieldsKnown && typeof previous.customerFieldsKnown === 'object' ? previous.customerFieldsKnown as Record<string, unknown> : {};
+    const summary = {
+      version: 1,
+      lastIntent: response.intent,
+      language: response.language,
+      productIds: response.productIds.slice(0, this.maxProductIds),
+      preferences: {
+        size: response.entities.size ?? previousPreferences.size ?? null,
+        color: response.entities.color ?? previousPreferences.color ?? null,
+        quantity: response.entities.quantity ?? previousPreferences.quantity ?? null,
+        minPrice: response.entities.minPrice ?? previousPreferences.minPrice ?? null,
+        maxPrice: response.entities.maxPrice ?? previousPreferences.maxPrice ?? null,
+        deliveryLocation: response.entities.deliveryLocation ?? previousPreferences.deliveryLocation ?? null,
+      },
+      customerFieldsKnown: {
+        name: Boolean(response.entities.customerName) || previousKnown.name === true,
+        phone: Boolean(response.entities.phone) || previousKnown.phone === true,
+        address: Boolean(response.entities.address) || previousKnown.address === true,
+      },
+      order: response.orderAction ? { id: response.orderAction.orderId, lastAction: response.orderAction.type } : previous.order ?? null,
+    };
+    await (this.prisma as any).conversation.update({
+      where: { id: conversationId },
+      data: { salesState, conversationSummary: summary, summaryUpdatedAt: new Date() },
+    });
+  }
+
   private isFailureResponse(response: AIResponse): boolean {
     return (
       response.intent === 'unknown' ||
-      response.confidence < 0.45 ||
+      response.confidence < this.lowConfidenceThreshold ||
       response.source === 'fallback' ||
       ['request_product_clarification', 'request_voice_clarification'].includes(response.action ?? '')
     );
@@ -408,7 +469,7 @@ export class ChatService {
     if (response.intent === 'human_request') return 'customer_requested_human';
     if (response.intent === 'order_intent') return 'order_problem';
     if (response.action === 'request_product_clarification') return 'unavailable_product';
-    if (response.source === 'fallback' || response.confidence < 0.45) return 'ai_uncertain';
+    if (response.source === 'fallback' || response.confidence < this.lowConfidenceThreshold) return 'ai_uncertain';
     return 'complex_question';
   }
 

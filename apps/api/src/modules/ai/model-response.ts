@@ -23,11 +23,25 @@ export const AI_RESPONSE_JSON_SCHEMA: Record<string, unknown> = {
       ],
     },
     confidence: { type: 'number', minimum: 0, maximum: 1 },
+    language: { type: 'string', enum: ['bn', 'banglish', 'en'] },
+    entities: {
+      type: 'object', additionalProperties: false,
+      properties: {
+        productCode: { anyOf: [{ type: 'string' }, { type: 'null' }] }, productName: { anyOf: [{ type: 'string' }, { type: 'null' }] },
+        size: { anyOf: [{ type: 'string', enum: ['XS','S','M','L','XL','XXL','XXXL'] }, { type: 'null' }] },
+        color: { anyOf: [{ type: 'string', maxLength: 50 }, { type: 'null' }] },
+        quantity: { anyOf: [{ type: 'integer', minimum: 1, maximum: 100 }, { type: 'null' }] },
+        minPrice: { anyOf: [{ type: 'number', minimum: 0 }, { type: 'null' }] }, maxPrice: { anyOf: [{ type: 'number', minimum: 0 }, { type: 'null' }] },
+        customerName: { anyOf: [{ type: 'string' }, { type: 'null' }] }, phone: { anyOf: [{ type: 'string' }, { type: 'null' }] }, address: { anyOf: [{ type: 'string' }, { type: 'null' }] },
+        deliveryLocation: { anyOf: [{ type: 'string', enum: ['DHAKA','OUTSIDE_DHAKA'] }, { type: 'null' }] }, ordinalReference: { anyOf: [{ type: 'integer' }, { type: 'null' }] }, correction: { type: 'boolean' },
+      },
+      required: ['productCode','productName','size','color','quantity','minPrice','maxPrice','customerName','phone','address','deliveryLocation','ordinalReference','correction'],
+    },
     requiresHuman: { type: 'boolean' },
-    action: { anyOf: [{ type: 'string' }, { type: 'null' }] },
-    productIds: { type: 'array', items: { type: 'integer' }, maxItems: 10 },
+    action: { anyOf: [{ type: 'string', enum: ['reply','clarify','recommend','begin_order','handover','request_human','request_product_clarification','create_order','update_order','confirm_order','cancel_order','request_order_information'] }, { type: 'null' }] },
+    productIds: { type: 'array', items: { type: 'integer' }, maxItems: 5 },
   },
-  required: ['reply', 'intent', 'confidence', 'requiresHuman', 'action', 'productIds'],
+  required: ['reply', 'intent', 'confidence', 'language', 'entities', 'requiresHuman', 'action', 'productIds'],
 };
 
 function jsonCandidates(text: string): string[] {

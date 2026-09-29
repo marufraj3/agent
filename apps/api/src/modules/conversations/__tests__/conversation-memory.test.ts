@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import type { PrismaClient } from '@alzeena/database';
 import type { AIInput, AIResponse } from '../../ai/ai.types.js';
+import { extractEntities } from '../../ai/entity-extractor.js';
 import type { AIService } from '../../ai/ai.service.js';
 import { ChatService } from '../chat.service.js';
 import { ConversationContextService } from '../conversation-context.service.js';
@@ -131,6 +132,8 @@ class CapturingAI {
       reply: this.inputs.length === 1 ? 'Messi Polo 990 টাকা।' : 'জি, M size আছে।',
       intent: this.inputs.length === 1 ? 'price_inquiry' : 'size_inquiry',
       confidence: 0.99,
+      language: 'bn',
+      entities: extractEntities(input.message),
       requiresHuman: false,
       action: null,
       productIds: [6238],
@@ -180,7 +183,7 @@ test('saves messages and returns only recent messages in chronological order', a
   await service.addMessage({ conversationId: conversation.id, customerId: customer.id, role: 'user', content: 'three' });
 
   const recent = await service.getRecentMessages(conversation.id, 2);
-  assert.deepEqual(recent.map((item) => item.content), ['two', 'three']);
+  assert.deepEqual(recent.map((item: { content: string }) => item.content), ['two', 'three']);
   assert.equal(await service.countMessages(conversation.id), 3);
 });
 

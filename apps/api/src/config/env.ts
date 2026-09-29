@@ -38,6 +38,8 @@ const envSchema = z.object({
   GEMINI_TIMEOUT_MS: z.coerce.number().int().min(1_000).max(120_000).default(30_000),
   AI_MAX_HISTORY_MESSAGES: z.coerce.number().int().min(0).max(20).default(8),
   AI_MAX_PRODUCTS: z.coerce.number().int().min(1).max(10).default(5),
+  AI_CONFIDENCE_HIGH: z.coerce.number().min(0).max(1).default(0.8),
+  AI_CONFIDENCE_LOW: z.coerce.number().min(0).max(1).default(0.45),
   AI_TEST_RATE_LIMIT_PER_MINUTE: z.coerce.number().int().min(1).max(300).default(30),
   AI_MAX_CONSECUTIVE_FAILURES: z.coerce.number().int().min(1).max(10).default(2),
   INBOX_PAGE_SIZE: z.coerce.number().int().min(10).max(100).default(25),

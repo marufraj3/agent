@@ -44,6 +44,9 @@ export function classifyIntent(message: string): AIIntent {
   if (/\b(order|অর্ডার|nibo|নিব|kinbo|কিনব|confirm)\b/iu.test(normalized)) {
     return 'order_intent';
   }
+  if (/\b(similar|recommend|suggest|options?|budget|within|under|moto|মতো|দেখান|সাজেস্ট|বাজেট)\b/iu.test(normalized)) {
+    return 'product_search';
+  }
   if (/\b(price|dam|দাম|koto|কত|৳|tk)\b/iu.test(normalized)) {
     return 'price_inquiry';
   }
@@ -65,7 +68,7 @@ export function classifyIntent(message: string): AIIntent {
 
 export function routeAIInput(input: AIInput): AIRouteDecision {
   const intent = classifyIntent(input.message);
-  const recommendationRequest = /\b(similar|recommend|suggest|moto|মতো|কোনটা|which one)\b/iu.test(
+  const recommendationRequest = /\b(similar|recommend|suggest|options?|budget|within|under|moto|মতো|কোনটা|which one|সাজেস্ট|বাজেট)\b/iu.test(
     input.message,
   );
   const complexSizeAdvice = /\b(height|weight|chest|waist|measurement|উচ্চতা|ওজন|বুক)\b/iu.test(

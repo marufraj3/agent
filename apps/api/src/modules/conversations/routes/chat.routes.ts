@@ -48,6 +48,7 @@ export async function chatRoutes(app: FastifyInstance): Promise<void> {
         const data = await chat.send({
           ...parsed.data,
           channel: parsed.data.channel ?? platformChannel ?? 'web',
+          includeDebug: true,
         });
         return { success: true, data };
       } catch (error) {
