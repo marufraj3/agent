@@ -6,6 +6,8 @@ export const inboxQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(100).optional(),
   filter: z.enum(['all', 'unread', 'ai', 'human', 'closed', 'messenger', 'web', 'pending', 'mine', 'active', 'order_pending', 'order_completed', 'failed']).default('all'),
   search: z.string().trim().max(200).optional(),
+  handoverReason: z.enum(handoverReasons).optional(),
+  priority: z.enum(['high','normal']).optional(),
 }).strict();
 
 export const conversationParamsSchema = z.object({ id: z.uuid() }).strict();

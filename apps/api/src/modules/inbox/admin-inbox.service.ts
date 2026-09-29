@@ -12,6 +12,8 @@ export interface InboxQuery {
   limit: number;
   filter: InboxFilter;
   search?: string;
+  handoverReason?: HandoverReasonName;
+  priority?: 'high' | 'normal';
 }
 
 export class InboxError extends Error {
@@ -88,7 +90,13 @@ export class AdminInboxService {
         ] } } },
       ].filter((item) => !('id' in item) || item.id !== undefined),
     } : {};
-    const where = { ...statusFilter, ...searchFilter };
+    const urgentReasons = ['COMPLAINT','REFUND_REQUEST','ORDER_PROBLEM','PAYMENT_PROBLEM'];
+    const handoverFilter = query.handoverReason
+      ? { handovers: { some: { reason: query.handoverReason.toUpperCase(), status: { in: ['PENDING','ASSIGNED'] } } } }
+      : query.priority
+        ? { handovers: { some: { reason: query.priority === 'high' ? { in: urgentReasons } : { notIn: urgentReasons }, status: { in: ['PENDING','ASSIGNED'] } } } }
+        : {};
+    const where = { AND: [statusFilter, searchFilter, handoverFilter] };
     const [items, total, unreadTotal] = await Promise.all([
       this.db.conversation.findMany({
         where,

@@ -3,6 +3,8 @@
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { clearAdminSession } from '../_lib/admin-client';
+import { GlobalSearch } from './global-search';
+import { SystemNotifications } from './system-notifications';
 
 const navigation = [
   { label: "Dashboard", href: "/admin" },
@@ -14,7 +16,7 @@ const navigation = [
   { label: "Products", href: "/admin/products" },
   { label: "Knowledge Base", href: "/admin/knowledge-base" },
   { label: "Settings", href: "/admin/settings" },
-  { label: "System", href: "/admin/system" },
+  { label: "Control Center", href: "/admin/system-health" },
 ] as const;
 
 export function AdminShell({ children }: { children: React.ReactNode }) {
@@ -75,7 +77,7 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
           </button>
         </div>
       </aside>
-      <div className="min-w-0">{children}</div>
+      <div className="min-w-0"><header className="sticky top-0 z-20 flex gap-3 border-b bg-stone-100/90 px-4 py-3 backdrop-blur sm:px-8"><GlobalSearch /><SystemNotifications /></header>{children}</div>
     </div>
   );
 }

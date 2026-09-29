@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { AdminAccess } from "../_components/admin-access";
 import { ConfirmModal, ErrorState, Toast, Badge } from "../_components/ui";
 import { adminRequest, useAdminPassword } from "../_lib/admin-client";
+import { OperationalControls } from './_components/operational-controls';
 type Settings = {
   deliveryChargeDhaka: string;
   deliveryChargeOutsideDhaka: string;
@@ -166,7 +167,7 @@ export default function SettingsPage() {
         </div>
       ) : null}
       <div className="mt-6 grid gap-6 xl:grid-cols-2">
-        <Section title="Delivery">
+        <Section title="Business · Delivery">
           <Field
             label="Dhaka Delivery Charge"
             value={settings.deliveryChargeDhaka}
@@ -195,7 +196,7 @@ export default function SettingsPage() {
             Save delivery
           </button>
         </Section>
-        <Section title="Order API">
+        <Section title="Orders · Website API">
           <Field
             label="Website API Base"
             value={settings.websiteApiBaseUrl}
@@ -243,7 +244,7 @@ export default function SettingsPage() {
         </Section>
       </div>
       <div className="mt-6 grid gap-6 xl:grid-cols-[1fr_1fr]">
-        <Section title="Quick Replies">
+        <Section title="Messenger · Quick Replies">
           <div className="space-y-3">
             {replies.map((q) => (
               <div key={q.id} className="rounded-xl border p-3">
@@ -332,6 +333,7 @@ export default function SettingsPage() {
           </p>
         </Section>
       </div>
+      <OperationalControls />
       {deleteId ? (
         <ConfirmModal
           title="Delete Quick Reply?"

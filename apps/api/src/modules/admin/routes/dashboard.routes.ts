@@ -134,6 +134,10 @@ export async function dashboardRoutes(app: FastifyInstance) {
       const circuits = Object.fromEntries(
         circuitBreakerSnapshots().map((item) => [item.service, item.state]),
       );
+      const [queueMetrics, unresolvedAlerts] = await Promise.all([
+        Promise.all(Object.entries(app.queues).map(async ([name, queue]) => ({ name, paused: await queue.isPaused().catch(() => false), counts: await queue.getJobCounts('waiting','active','delayed','failed').catch(() => ({})) }))),
+        (db.messengerAlert?.count ? db.messengerAlert.count({ where: { resolvedAt: null } }) : Promise.resolve(0)),
+      ]);
       const facebook = getMessengerConfig();
       return {
         success: true,
@@ -188,6 +192,8 @@ export async function dashboardRoutes(app: FastifyInstance) {
               : 0,
           },
           automation: { pendingFollowUps, sentToday: sentFollowUps, cancelled: cancelledFollowUps, failed: failedFollowUps, abandonedOrders },
+          queues: queueMetrics,
+          unresolvedAlerts,
           orders: {
             draft: orderStats.draft ?? 0,
             awaitingInformation: orderStats.awaiting_information ?? 0,

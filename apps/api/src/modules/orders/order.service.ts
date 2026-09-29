@@ -406,6 +406,8 @@ export class OrderService {
   }
 
   private async submitClaimedOrder(orderId: string, isAdminRetry: boolean) {
+    const controls = this.db.setting?.findMany ? await this.db.setting.findMany({ where: { key: { in: ['orders.submission_paused', 'system.maintenance_mode'] }, value: 'true' }, select: { key: true } }) : [];
+    if (controls.length > 0) throw new OrderEngineError('Order submission is temporarily paused. The confirmed order remains available for an administrator.', 'ORDER_SUBMISSION_PAUSED', 503);
     const order = await this.getOrder(orderId);
     if (!order) throw new OrderEngineError('Order not found', 'ORDER_NOT_FOUND', 404);
     if (isAdminRetry) {
@@ -496,6 +498,7 @@ export class OrderService {
             code: apiError.code,
             outcomeKnown: apiError.outcomeKnown,
           });
+          if (tx.messengerAlert?.create) await tx.messengerAlert.create({ data: { conversationId: claimedOrder.conversationId, type: 'ORDER_SUBMISSION_FAILED', severity: 'ERROR', message: 'Order submission failed and requires operational review', metadata: { source: 'orders', orderId, code: apiError.code, outcomeKnown: apiError.outcomeKnown } } });
         });
       } catch (persistenceError) {
         this.logger.warn?.(

@@ -29,6 +29,8 @@ const worker = new Worker<ProductSyncJobData, ProductSyncResult>(
     if (job.name !== PRODUCT_SYNC_JOB_NAME) {
       throw new Error(`Unsupported product sync job: ${job.name}`);
     }
+    const paused = await prisma.setting.findFirst({ where: { key: { in: ['product_sync.paused','system.maintenance_mode'] }, value: 'true' }, select: { key: true } });
+    if (paused) throw new UnrecoverableError(`Product synchronization paused by ${paused.key}`);
 
     const service = new ProductSyncService({
       prisma,
@@ -45,6 +47,7 @@ const worker = new Worker<ProductSyncJobData, ProductSyncResult>(
       await connection.incr('product:cache:version');
       return result;
     } catch (error) {
+      await prisma.messengerAlert.create({ data: { type: 'PRODUCT_SYNC_FAILED', severity: 'ERROR', message: (error instanceof Error ? error.message : 'Product synchronization failed').slice(0, 500), metadata: { source: 'products', jobId: job.id, errorType: error instanceof Error ? error.name : 'UnknownError' } } }).catch(() => undefined);
       if (error instanceof ProductFeedResponseError) {
         throw new UnrecoverableError(error.message);
       }

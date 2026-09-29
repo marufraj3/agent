@@ -708,6 +708,18 @@ AI prompts place platform safety rules above bounded Knowledge Base, conversatio
 
 Worker concurrency, body/rate limits, prompt budgets, cache TTL, timeouts, and retention are centrally validated environment values. BullMQ jobs have bounded retries and completed/failed retention. Production container examples use multi-stage builds, non-root users, production mode, healthchecks, and `.dockerignore`. CI, safe staging load-test tooling, PostgreSQL backup/restore scripts, disaster recovery, migration, monitoring, and deployment procedures are documented in `docs/production-checklist.md`. Apply migration `20260930160000_production_hardening` before deployment.
 
+## Step 21 operations control center
+
+The authenticated Admin Console exposes factual operational views at `/admin/system-health`, `/admin/queues`, `/admin/failed-jobs`, `/admin/ai-monitoring`, `/admin/messenger-health`, `/admin/product-sync`, and `/admin/activity-log`. The dashboard consolidates database-backed AI, Messenger, order, product-sync, alert, worker, and BullMQ snapshots. Server-side global search covers customers, phones, conversations, orders/external order IDs, and product codes/names through bounded indexed queries.
+
+Public probes are deliberately inexpensive: `GET /api/health` is liveness-only and `GET /api/health/readiness` performs time-bounded PostgreSQL and Redis checks. Detailed dependency/circuit state, worker heartbeats, sanitized recent errors, media failures, and queue state are Admin-only. Queue controls support pause/resume, capped failed retries, selected retries, and cleanup of completed jobs older than 24 hours; there is no delete-all operation.
+
+Emergency controls in Settings can pause automated AI responses, Messenger outgoing automation, order submission, product sync, or activate maintenance mode. Changes require explicit confirmation and a reason and are written to `SystemLog`. Human Admin access, health probes, inbox history, and human Messenger replies remain available. Credentials remain environment-only and are never returned by monitoring APIs.
+
+Retention cleanup runs daily through the existing customer-followups worker. Configure `SYSTEM_LOG_RETENTION_DAYS`, `EVENT_RETENTION_DAYS`, and `QUEUE_COMPLETED_RETENTION_HOURS`. Cleanup is limited to old completed queue jobs, processed Messenger events, non-audit technical logs, and expired temporary media URLs; Admin audit events, active orders, customer/order records, and active processing are preserved.
+
+For troubleshooting, verify PostgreSQL and Redis readiness, then worker heartbeat keys and queue pause state in the Control Center. Gemini, Messenger, and Order API health reflects local circuit-breaker state and deliberately avoids an external call per refresh. Product sync rejects overlapping full runs. Apply migration `20260930233000_operations_control_center` for indexed PostgreSQL search.
+
 ## Step 20 sales intelligence and recommendations
 
 The Step 20 path is deterministic intent extraction → structured customer preferences → bounded local Product DB filtering → transparent internal relevance scoring → existing AI/Order Engine orchestration. Clear category, budget, size, color, comparison, and similarity requests avoid Gemini. Every returned price uses the existing effective-price resolver, and every size result uses active variation stock plus the existing pre-order rule. Recommendation scores remain internal; customer responses show only verified facts and no unsupported “best” or quality claims.

@@ -23,12 +23,13 @@ export class MessengerOutgoingProcessor {
   private async processUnlocked(data: MessengerOutgoingJobData) {
     const outgoing = await this.db.messengerOutgoingMessage.findUnique({ where: { id: data.outgoingId }, include: { message: true, conversation: true } });
     if (!outgoing || ['SENT','DELIVERED','READ','CANCELLED','PERMANENT_FAILURE'].includes(outgoing.status)) return { duplicate: true };
-    const [emergency, page, source] = await Promise.all([
+    const [emergency, maintenance, page, source] = await Promise.all([
       this.db.setting.findUnique({ where: { key: 'messenger.emergency_stop' } }),
+      this.db.setting.findUnique({ where: { key: 'system.maintenance_mode' } }),
       this.db.messengerPage.findUnique({ where: { pageId: outgoing.pageId } }),
       outgoing.sourceEventLogId ? this.db.messengerEventLog.findUnique({ where: { id: outgoing.sourceEventLogId } }) : null,
     ]);
-    if ((emergency?.value === 'true' || page?.aiEnabled === false || outgoing.conversation.status !== 'ACTIVE') && outgoing.message.role !== 'HUMAN') return this.cancel(outgoing, emergency?.value === 'true' ? 'emergency_stop' : 'ai_or_conversation_inactive');
+    if ((emergency?.value === 'true' || maintenance?.value === 'true' || page?.aiEnabled === false || outgoing.conversation.status !== 'ACTIVE') && outgoing.message.role !== 'HUMAN') return this.cancel(outgoing, emergency?.value === 'true' ? 'emergency_stop' : maintenance?.value === 'true' ? 'maintenance_mode' : 'ai_or_conversation_inactive');
     if (source?.responseQueuedAt) {
       const newer = await this.db.message.findFirst({ where: { conversationId: outgoing.conversationId, role: 'USER', createdAt: { gt: source.responseQueuedAt } }, orderBy: { createdAt: 'desc' } });
       if (newer) return this.cancel(outgoing, 'stale_response_newer_customer_message');

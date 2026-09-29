@@ -430,6 +430,15 @@ export class ChatService {
       }
     }
 
+    if (!response && (this.prisma as any).setting?.findFirst) {
+      const control = await (this.prisma as any).setting.findFirst({ where: { key: { in: ['ai.emergency_disabled','system.maintenance_mode'] }, value: 'true' }, select: { key: true } });
+      if (control) response = {
+        reply: 'আমাদের automated service সাময়িকভাবে বন্ধ আছে। আপনার বার্তাটি সংরক্ষিত হয়েছে এবং একজন টিম মেম্বার সাহায্য করবেন।',
+        intent: 'human_request', confidence: 1, language: 'bn', entities: extractEntities(customerMessage),
+        requiresHuman: true, action: 'request_human', productIds: [], products: [], source: 'rules',
+      };
+    }
+
     if (/\b(?:my|preferred|আমার|পছন্দ)\b/iu.test(customerMessage)) {
       const preference = extractEntities(customerMessage);
       await (this.prisma as any).customer.update({ where: { id: customer.id }, data: { ...(preference.size ? { preferredSize: preference.size } : {}), ...(preference.color ? { preferredColor: preference.color } : {}) } });

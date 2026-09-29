@@ -21,6 +21,8 @@ type Data = {
   };
   orders: Record<string, number>;
   automation: { pendingFollowUps: number; sentToday: number; cancelled: number; failed: number; abandonedOrders: number };
+  queues: Array<{name:string;paused:boolean;counts:Record<string,number>}>;
+  unresolvedAlerts: number;
 };
 const ranges = [
   ["today", "Today"],
@@ -62,8 +64,12 @@ export default function Dashboard() {
     }
   }, [password, range, from, to]);
   useEffect(() => {
-    if (hydrated && password) void load();
-  }, [hydrated, password, load]);
+    if (!hydrated || !password) return;
+    void load();
+    if (range === 'custom') return;
+    const timer = window.setInterval(() => void load(), 30_000);
+    return () => window.clearInterval(timer);
+  }, [hydrated, password, range, load]);
   return (
     <main className="mx-auto max-w-7xl px-4 py-7 sm:px-8">
       <div className="flex flex-wrap items-end justify-between gap-4">
@@ -155,6 +161,9 @@ export default function Dashboard() {
                 </div>
               ))}
             </div>
+          </Section>
+          <Section title={`Queue Operations · ${data.unresolvedAlerts} unresolved alert${data.unresolvedAlerts===1?'':'s'}`}>
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">{data.queues.map(q=><div key={q.name} className="rounded-2xl border bg-white p-4"><div className="flex justify-between"><b>{q.name}</b><Badge tone={q.paused?'amber':'green'}>{q.paused?'paused':'active'}</Badge></div><p className="mt-2 text-xs text-stone-600">{Object.entries(q.counts).map(([k,v])=>`${k}: ${v}`).join(' · ')}</p></div>)}</div>
           </Section>
           <div className="grid gap-7 xl:grid-cols-2">
             <Section title="Product Sync">

@@ -1,6 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 
-async function bounded(check: Promise<unknown>, timeoutMs = 2_000): Promise<'up' | 'down'> {
+export async function bounded(check: Promise<unknown>, timeoutMs = 2_000): Promise<'up' | 'down'> {
   let timer: NodeJS.Timeout | undefined;
   try {
     await Promise.race([check, new Promise((_, reject) => { timer = setTimeout(() => reject(new Error('health timeout')), timeoutMs); })]);
@@ -10,8 +10,8 @@ async function bounded(check: Promise<unknown>, timeoutMs = 2_000): Promise<'up'
 }
 
 export async function healthRoutes(app: FastifyInstance): Promise<void> {
-  app.get('/health', async () => ({ status: 'ok', service: 'alzeena-api', timestamp: new Date().toISOString(), uptimeSeconds: Math.floor(process.uptime()) }));
-  app.get('/ready', async (_request, reply) => {
+  const liveness = async () => ({ status: 'ok', service: 'alzeena-api', timestamp: new Date().toISOString(), uptimeSeconds: Math.floor(process.uptime()) });
+  const readiness = async (_request: unknown, reply: any) => {
     const [database, redis] = await Promise.all([
       bounded(app.prisma.$queryRaw`SELECT 1`),
       bounded(app.redis.ping()),
@@ -22,5 +22,9 @@ export async function healthRoutes(app: FastifyInstance): Promise<void> {
       timestamp: new Date().toISOString(), uptimeSeconds: Math.floor(process.uptime()),
       dependencies: { database, redis },
     });
-  });
+  };
+  app.get('/health', liveness);
+  app.get('/api/health', liveness);
+  app.get('/ready', readiness);
+  app.get('/api/health/readiness', readiness);
 }

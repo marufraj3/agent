@@ -43,6 +43,10 @@ export default function Orders() {
   const [status, setStatus] = useState("");
   const [searchInput, setSearchInput] = useState("");
   const [search, setSearch] = useState("");
+  const [source, setSource] = useState("");
+  const [from, setFrom] = useState("");
+  const [to, setTo] = useState("");
+  const [summary, setSummary] = useState<Array<{status:string;count:number;totalAmount:string|null}>>([]);
   const [page, setPage] = useState(1);
   const [pages, setPages] = useState(1);
   const [loading, setLoading] = useState(false);
@@ -55,18 +59,23 @@ export default function Orders() {
       const q = new URLSearchParams({ page: String(page), limit: "25" });
       if (status) q.set("status", status);
       if (search) q.set("search", search);
+      if (source) q.set("source", source);
+      if (from) q.set("from", new Date(`${from}T00:00:00+06:00`).toISOString());
+      if (to) q.set("to", new Date(`${to}T23:59:59+06:00`).toISOString());
       const r = await adminRequest<{
         data: O[];
+        summary: Array<{status:string;count:number;totalAmount:string|null}>;
         pagination: { pages: number };
       }>(`/admin/orders?${q}`, password);
       setItems(r.data);
+      setSummary(r.summary);
       setPages(r.pagination.pages);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Unable to load orders.");
     } finally {
       setLoading(false);
     }
-  }, [password, status, search, page]);
+  }, [password, status, search, source, from, to, page]);
   useEffect(() => {
     if (hydrated && password) void load();
   }, [hydrated, password, load]);
@@ -102,6 +111,11 @@ export default function Orders() {
           Search
         </button>
       </form>
+      <div className="mt-3 grid gap-2 sm:grid-cols-3">
+        <select value={source} onChange={e=>{setSource(e.target.value);setPage(1)}} className="rounded-xl border bg-white px-3 py-2"><option value="">All sources</option><option value="AI">AI</option><option value="HUMAN">Human</option><option value="ADMIN">Admin</option></select>
+        <label className="text-xs text-stone-500">From<input type="date" value={from} onChange={e=>{setFrom(e.target.value);setPage(1)}} className="mt-1 block w-full rounded-xl border bg-white px-3 py-2 text-sm text-stone-900"/></label>
+        <label className="text-xs text-stone-500">To<input type="date" value={to} onChange={e=>{setTo(e.target.value);setPage(1)}} className="mt-1 block w-full rounded-xl border bg-white px-3 py-2 text-sm text-stone-900"/></label>
+      </div>
       <div className="mt-3 flex gap-2 overflow-x-auto">
         {statuses.map(([k, l]) => (
           <button
@@ -116,6 +130,7 @@ export default function Orders() {
           </button>
         ))}
       </div>
+      {summary.length>0?<div className="mt-4 grid gap-2 sm:grid-cols-3 lg:grid-cols-5">{summary.map(item=><div key={item.status} className="rounded-xl border bg-white p-3"><p className="text-xs text-stone-500">{item.status.replaceAll('_',' ')}</p><b>{item.count}</b><span className="ml-2 text-xs text-stone-500">৳{Number(item.totalAmount??0).toFixed(2)}</span></div>)}</div>:null}
       {error ? (
         <div className="mt-5">
           <ErrorState message={error} retry={() => void load()} />

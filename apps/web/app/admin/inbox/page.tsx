@@ -134,6 +134,8 @@ export default function InboxPage() {
   const [filter, setFilter] = useState<Filter>("all");
   const [searchInput, setSearchInput] = useState("");
   const [search, setSearch] = useState("");
+  const [handoverReason, setHandoverReason] = useState("");
+  const [priority, setPriority] = useState("");
   const [page, setPage] = useState(1);
   const [pages, setPages] = useState(1);
   const [unread, setUnread] = useState(0);
@@ -150,6 +152,8 @@ export default function InboxPage() {
     try {
       const params = new URLSearchParams({ page: String(page), filter });
       if (search) params.set("search", search);
+      if (handoverReason) params.set("handoverReason", handoverReason);
+      if (priority) params.set("priority", priority);
       const response = await adminRequest<{
         success: true;
         data: { items: Summary[]; pages: number; unreadTotal: number };
@@ -164,7 +168,7 @@ export default function InboxPage() {
     } finally {
       setLoading(false);
     }
-  }, [filter, page, password, search]);
+  }, [filter, page, password, search, handoverReason, priority]);
 
   const openConversation = useCallback(
     async (id: string) => {
@@ -342,6 +346,7 @@ export default function InboxPage() {
                 Search
               </button>
             </div>
+            <div className="mt-3 grid grid-cols-2 gap-2"><select value={priority} onChange={e=>{setPriority(e.target.value);setPage(1)}} className="rounded-lg border px-2 py-1.5 text-xs"><option value="">All priorities</option><option value="high">High priority</option><option value="normal">Normal priority</option></select><select value={handoverReason} onChange={e=>{setHandoverReason(e.target.value);setPage(1)}} className="rounded-lg border px-2 py-1.5 text-xs"><option value="">All handover reasons</option><option value="complaint">Complaint</option><option value="refund_request">Refund</option><option value="order_problem">Order problem</option><option value="payment_problem">Payment</option><option value="customer_requested_human">Customer requested</option><option value="ai_uncertain">AI uncertain</option><option value="repeated_failure">Repeated failure</option></select></div>
             <div className="mt-3 flex gap-1 overflow-x-auto pb-1">
               {filters.map(([value, label]) => (
                 <button
