@@ -14,7 +14,7 @@ import type { MessengerOutgoingJobData } from '../modules/channels/messenger/mes
 
 const logger = pino({ level: env.LOG_LEVEL, redact: ['*.token','*.accessToken','*.FACEBOOK_PAGE_ACCESS_TOKEN','*.FACEBOOK_APP_SECRET','*.FACEBOOK_VERIFY_TOKEN'] });
 const connection = createRedisConnection(); const queue = createMessengerOutgoingQueue();
-await Promise.all([prisma.$connect(), queue.setGlobalConcurrency(10)]);
+await Promise.all([prisma.$connect(), queue.setGlobalConcurrency(env.MESSENGER_SEND_WORKER_CONCURRENCY)]);
 const config = getMessengerConfig();
 const provider = env.MESSENGER_PROVIDER === 'mock' ? new MockMessengerProvider() : new MetaMessengerProvider(config, async (pageId) => {
   if (pageId === config.pageId && config.pageAccessToken) return config.pageAccessToken;
@@ -27,7 +27,7 @@ const worker = new Worker<MessengerOutgoingJobData>(MESSENGER_OUTGOING_QUEUE_NAM
   if (job.name === MESSENGER_CLEANUP_JOB_NAME) return processor.cleanupTechnicalLogs(env.MESSENGER_TECHNICAL_LOG_RETENTION_DAYS);
   if (job.name !== MESSENGER_OUTGOING_JOB_NAME) throw new UnrecoverableError(`Unsupported outgoing Messenger job: ${job.name}`);
   try { return await processor.process(job.data); } catch (error) { if (error instanceof MessengerSendError && !error.retryable) throw new UnrecoverableError(error.message); throw error; }
-}, { connection, concurrency: 10, prefix: 'alzeena' });
+}, { connection, concurrency: env.MESSENGER_SEND_WORKER_CONCURRENCY, prefix: 'alzeena' });
 await queue.upsertJobScheduler(MESSENGER_CLEANUP_JOB_NAME, { every: 24 * 60 * 60_000 }, { name: MESSENGER_CLEANUP_JOB_NAME, data: { outgoingId: '__cleanup__', correlationId: 'scheduled-cleanup' } });
 worker.on('completed', (job) => logger.info({ event: 'MESSENGER_SEND_COMPLETED', jobId: job.id, correlationId: job.data.correlationId }, 'Messenger send completed'));
 worker.on('failed', (job, error) => logger.error({ event: 'MESSENGER_SEND_FAILED', jobId: job?.id, correlationId: job?.data.correlationId, errorType: error.name }, 'Messenger send failed'));

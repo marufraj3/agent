@@ -64,7 +64,7 @@ const worker = new Worker<AudioTranscriptionJobData | AudioBatchJobData>(
       throw error;
     }
   },
-  { connection, concurrency: 3, prefix: 'alzeena' },
+  { connection, concurrency: env.AUDIO_WORKER_CONCURRENCY, prefix: 'alzeena' },
 );
 
 await queue.upsertJobScheduler('expire-retained-audio', { every: 15 * 60_000 }, { name: 'expire-retained-audio', data: {} as AudioBatchJobData });

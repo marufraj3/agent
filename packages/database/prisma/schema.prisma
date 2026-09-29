@@ -70,6 +70,7 @@ model Product {
   subCategory       SubCategory?       @relation(fields: [subCategoryId], references: [websiteSubCategoryId], onDelete: SetNull, onUpdate: Cascade)
   variations        ProductVariation[]
   orderItems        OrderItem[]
+  priceHistory      ProductPriceHistory[]
 
   @@index([productCode])
   @@index([productName])
@@ -79,6 +80,23 @@ model Product {
   @@index([isPreOrder])
   @@index([presentInFeed])
   @@map("products")
+}
+
+model ProductPriceHistory {
+  id               String   @id @default(uuid()) @db.Uuid
+  productId        String   @map("product_id") @db.Uuid
+  oldSellPrice     Decimal? @map("old_sell_price") @db.Decimal(12, 2)
+  newSellPrice     Decimal  @map("new_sell_price") @db.Decimal(12, 2)
+  oldDiscountPrice Decimal? @map("old_discount_price") @db.Decimal(12, 2)
+  newDiscountPrice Decimal? @map("new_discount_price") @db.Decimal(12, 2)
+  oldFlashPrice    Decimal? @map("old_flash_price") @db.Decimal(12, 2)
+  newFlashPrice    Decimal? @map("new_flash_price") @db.Decimal(12, 2)
+  changedAt        DateTime @default(now()) @map("changed_at")
+  product          Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@index([productId, changedAt])
+  @@index([changedAt])
+  @@map("product_price_history")
 }
 
 model ProductVariation {
@@ -272,6 +290,7 @@ model Customer {
   @@unique([platform, platformPageId, platformUserId])
   @@index([platform, platformUserId])
   @@index([platformPageId, platformUserId])
+  @@index([phone])
   @@index([createdAt])
   @@index([journeyState, lastActivityAt])
   @@map("customers")
@@ -388,6 +407,7 @@ model Message {
 
   @@index([conversationId, createdAt])
   @@index([customerId, createdAt])
+  @@index([role, createdAt])
   @@index([createdAt])
   @@map("messages")
 }
@@ -769,6 +789,7 @@ model Order {
   @@index([customerId, createdAt])
   @@index([conversationId, status, updatedAt])
   @@index([status, createdAt])
+  @@index([status, updatedAt])
   @@index([submissionResult, updatedAt])
   @@map("orders")
 }

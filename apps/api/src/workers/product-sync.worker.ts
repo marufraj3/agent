@@ -20,7 +20,7 @@ const logger = pino({
 });
 const connection = createRedisConnection();
 const controlQueue = createProductSyncQueue();
-await controlQueue.setGlobalConcurrency(1);
+await controlQueue.setGlobalConcurrency(env.PRODUCT_SYNC_WORKER_CONCURRENCY);
 const stopHeartbeat = startWorkerHeartbeat(connection, PRODUCT_SYNC_QUEUE_NAME);
 
 const worker = new Worker<ProductSyncJobData, ProductSyncResult>(
@@ -41,7 +41,9 @@ const worker = new Worker<ProductSyncJobData, ProductSyncResult>(
     });
 
     try {
-      return await service.synchronize();
+      const result = await service.synchronize();
+      await connection.incr('product:cache:version');
+      return result;
     } catch (error) {
       if (error instanceof ProductFeedResponseError) {
         throw new UnrecoverableError(error.message);
@@ -51,7 +53,7 @@ const worker = new Worker<ProductSyncJobData, ProductSyncResult>(
   },
   {
     connection,
-    concurrency: 1,
+    concurrency: env.PRODUCT_SYNC_WORKER_CONCURRENCY,
     prefix: 'alzeena',
   },
 );

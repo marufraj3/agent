@@ -34,7 +34,10 @@ export function createAIService(prisma: PrismaClient, logger: AILogger): AIServi
     knowledgeBase: new KnowledgeBaseService(prisma),
     settings: new SettingsService(prisma),
     productContext: new ProductContextService(new ProductCatalogService(prisma)),
-    promptBuilder: new PromptBuilder(),
+    promptBuilder: new PromptBuilder({
+      knowledgeChars: env.AI_MAX_KNOWLEDGE_CHARS,
+      summaryChars: env.AI_MAX_SUMMARY_CHARS,
+    }),
     ruleResponses: new RuleResponseService(),
     eventLogger: new SystemLogAIEventLogger(prisma, logger),
     logger,

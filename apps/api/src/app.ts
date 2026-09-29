@@ -25,6 +25,9 @@ import { systemRoutes } from './routes/system.js';
 export async function buildApp(): Promise<FastifyInstance> {
   const app = Fastify({
     logger: loggerOptions,
+    bodyLimit: env.API_BODY_LIMIT_BYTES,
+    requestTimeout: 30_000,
+    keepAliveTimeout: 72_000,
     genReqId: (request) => {
       const supplied = request.headers['x-request-id'];
       return typeof supplied === 'string' && /^[a-zA-Z0-9._:-]{8,128}$/.test(supplied)
@@ -39,13 +42,30 @@ export async function buildApp(): Promise<FastifyInstance> {
   });
   app.addHook('onSend', async (request, reply, payload) => {
     reply.header('x-request-id', request.id);
+    reply.header('x-content-type-options', 'nosniff');
+    reply.header('x-frame-options', 'DENY');
+    reply.header('referrer-policy', 'no-referrer');
+    reply.header('permissions-policy', 'camera=(), microphone=(), geolocation=()');
+    reply.header('content-security-policy', "default-src 'none'; frame-ancestors 'none'; base-uri 'none'");
+    if (env.NODE_ENV === 'production') reply.header('strict-transport-security', 'max-age=31536000; includeSubDomains');
     return payload;
   });
   await registerInfrastructure(app);
   app.addHook('onRequest', async (request) => {
-    if (request.url.startsWith('/api/') && !request.url.startsWith('/api/webhooks/facebook')) {
-      await enforceRateLimit(app.redis, 'api-ip', request.ip, 300, 60);
+    const path = request.url.split('?')[0]!;
+    if (path.startsWith('/api/admin/') && !['GET', 'HEAD', 'OPTIONS'].includes(request.method)) {
+      const origin = request.headers.origin;
+      if (origin && origin !== env.FRONTEND_URL) throw new AppError('Forbidden origin', 403, 'FORBIDDEN_ORIGIN');
     }
+    if (!path.startsWith('/api/') || path.startsWith('/api/webhooks/facebook')) return;
+    const [scope, limit] = path === '/api/admin/session'
+      ? ['admin-login', env.ADMIN_LOGIN_RATE_LIMIT_PER_15_MINUTES * 4]
+      : path.startsWith('/api/admin/')
+        ? ['admin-api', env.ADMIN_API_RATE_LIMIT_PER_MINUTE]
+        : path.startsWith('/api/ai/')
+          ? ['ai-api', env.AI_CUSTOMER_RATE_LIMIT_PER_MINUTE]
+          : ['public-api', env.PUBLIC_API_RATE_LIMIT_PER_MINUTE];
+    await enforceRateLimit(app.redis, scope, request.ip, limit, 60);
   });
   await app.register(healthRoutes);
   await app.register(systemRoutes);

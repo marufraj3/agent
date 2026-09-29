@@ -1,3 +1,4 @@
+import { statfsSync } from 'node:fs';
 import type { FastifyInstance } from "fastify";
 import { ValidationError, NotFoundError } from "../errors/app-error.js";
 import { circuitBreakerSnapshots } from "../infrastructure/circuit-breaker.js";
@@ -97,6 +98,19 @@ export async function systemRoutes(app: FastifyInstance): Promise<void> {
           }))
           .catch(() => null),
       ]);
+    const alerts = queues.flatMap((queue) => {
+      const counts = queue.counts as Record<string, number>;
+      const backlog = Number(counts.waiting ?? 0) + Number(counts.delayed ?? 0);
+      const failed = Number(counts.failed ?? 0);
+      return [
+        ...(backlog >= 1_000
+          ? [{ type: 'QUEUE_BACKLOG_HIGH', queue: queue.name, value: backlog }]
+          : []),
+        ...(failed >= 100
+          ? [{ type: 'QUEUE_FAILURE_COUNT_HIGH', queue: queue.name, value: failed }]
+          : []),
+      ];
+    });
     const workers = await Promise.all(
       Object.values(queueNames).map(async (name) => ({
         name,
@@ -105,6 +119,16 @@ export async function systemRoutes(app: FastifyInstance): Promise<void> {
           .catch(() => null),
       })),
     );
+    let disk: { totalBytes: number; freeBytes: number } | null = null;
+    try {
+      const filesystem = statfsSync(process.cwd());
+      disk = {
+        totalBytes: filesystem.blocks * filesystem.bsize,
+        freeBytes: filesystem.bavail * filesystem.bsize,
+      };
+    } catch (error) {
+      app.log.warn({ err: error }, 'Could not read filesystem capacity metrics');
+    }
     return {
       success: true,
       data: {
@@ -113,11 +137,13 @@ export async function systemRoutes(app: FastifyInstance): Promise<void> {
         redis,
         queues,
         workers,
+        alerts,
         circuits: circuitBreakerSnapshots(),
         latestProductSync: latestSync,
         productMetrics,
         uptimeSeconds: Math.floor(process.uptime()),
         memory: process.memoryUsage(),
+        disk,
         checkedInMs: Date.now() - started,
         timestamp: new Date().toISOString(),
       },
@@ -197,8 +223,17 @@ export async function systemRoutes(app: FastifyInstance): Promise<void> {
 
   app.get("/api/admin/system/logs", protectedRoute, async (request) => {
     const query = request.query as Record<string, string | undefined>;
-    const page = Math.max(1, Number(query.page) || 1);
-    const limit = Math.min(100, Math.max(1, Number(query.limit) || 25));
+    const parsedPage = Number(query.page ?? 1);
+    const parsedLimit = Number(query.limit ?? 25);
+    if (!Number.isInteger(parsedPage) || parsedPage < 1 || !Number.isInteger(parsedLimit) || parsedLimit < 1 || parsedLimit > 100) {
+      throw new ValidationError('Invalid logs pagination');
+    }
+    if (query.search && query.search.length > 200) throw new ValidationError('Search is too long');
+    if (query.cursor && !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(query.cursor)) {
+      throw new ValidationError('Invalid logs cursor');
+    }
+    const page = parsedPage;
+    const limit = parsedLimit;
     const levelMap: Record<string, string> = {
       info: "INFO",
       warning: "WARN",
@@ -229,13 +264,26 @@ export async function systemRoutes(app: FastifyInstance): Promise<void> {
           { type: { contains: query.search, mode: "insensitive" } },
         ],
       });
-    const where: any = conditions.length ? { AND: conditions } : {};
     const db = app.prisma as any;
+    const cursor = query.cursor
+      ? await db.systemLog.findUnique({
+          where: { id: query.cursor },
+          select: { id: true, createdAt: true },
+        })
+      : null;
+    if (query.cursor && !cursor) throw new ValidationError('Logs cursor was not found');
+    const baseWhere: any = conditions.length ? { AND: conditions } : {};
+    const cursorCondition = cursor
+      ? { OR: [{ createdAt: { lt: cursor.createdAt } }, { createdAt: cursor.createdAt, id: { lt: cursor.id } }] }
+      : null;
+    const itemWhere = cursorCondition
+      ? { AND: [...conditions, cursorCondition] }
+      : baseWhere;
     const [items, total] = await Promise.all([
       db.systemLog.findMany({
-        where,
-        orderBy: { createdAt: "desc" },
-        skip: (page - 1) * limit,
+        where: itemWhere,
+        orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+        skip: cursor ? 0 : (page - 1) * limit,
         take: limit,
         select: {
           id: true,
@@ -251,7 +299,7 @@ export async function systemRoutes(app: FastifyInstance): Promise<void> {
           metadata: true,
         },
       }),
-      db.systemLog.count({ where }),
+      db.systemLog.count({ where: baseWhere }),
     ]);
     const safeItems = items.map((item: any) => ({
       ...item,
@@ -269,6 +317,7 @@ export async function systemRoutes(app: FastifyInstance): Promise<void> {
         limit,
         total,
         pages: Math.ceil(total / limit),
+        nextCursor: items.length === limit ? items.at(-1)?.id ?? null : null,
       },
     };
   });

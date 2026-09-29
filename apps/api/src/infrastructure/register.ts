@@ -1,4 +1,5 @@
 import { prisma } from '@alzeena/database';
+import { env } from '../config/env.js';
 import type { FastifyInstance } from 'fastify';
 import { createProductSyncQueue } from '../modules/products/product-sync.queue.js';
 import { createMessengerEventQueue } from '../modules/channels/messenger/messenger.queue.js';
@@ -36,11 +37,11 @@ export async function registerInfrastructure(app: FastifyInstance): Promise<void
     await Promise.all([
       prisma.$connect(),
       redis.connect(),
-      productSyncQueue.setGlobalConcurrency(1),
-      messengerEventQueue.setGlobalConcurrency(5),
-      messengerOutgoingQueue.setGlobalConcurrency(10),
-      audioTranscriptionQueue.setGlobalConcurrency(3),
-      imageAnalysisQueue.setGlobalConcurrency(3),
+      productSyncQueue.setGlobalConcurrency(env.PRODUCT_SYNC_WORKER_CONCURRENCY),
+      messengerEventQueue.setGlobalConcurrency(env.MESSENGER_WORKER_CONCURRENCY),
+      messengerOutgoingQueue.setGlobalConcurrency(env.MESSENGER_SEND_WORKER_CONCURRENCY),
+      audioTranscriptionQueue.setGlobalConcurrency(env.AUDIO_WORKER_CONCURRENCY),
+      imageAnalysisQueue.setGlobalConcurrency(env.IMAGE_WORKER_CONCURRENCY),
     ]);
     app.log.info('PostgreSQL and Redis connections established');
   });

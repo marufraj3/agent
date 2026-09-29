@@ -37,8 +37,9 @@ export function AdminAccess({
       >
         {loading ? 'Loading…' : 'Load admin data'}
       </button>
+      <button type="button" onClick={() => onPasswordChange('')} className="rounded-xl border px-4 py-3 text-sm font-semibold text-stone-700">Logout</button>
       <p className="text-xs leading-5 text-stone-500 sm:max-w-48">
-        Kept only in this browser tab and sent as a protected request header.
+        Password is exchanged once for a short-lived HttpOnly, SameSite session cookie and is never stored in browser storage.
       </p>
     </div>
   );

@@ -1,5 +1,5 @@
 import type { FastifyInstance } from "fastify";
-import type { ZodType } from "zod";
+import { z, type ZodType } from "zod";
 import { env } from "../../../config/env.js";
 import { AppError } from "../../../errors/app-error.js";
 import {
@@ -9,6 +9,8 @@ import {
   settingsUpdateSchema,
 } from "../admin.schemas.js";
 import { requireAdmin } from "../auth/require-admin.js";
+import { isAdminPasswordValid } from "../auth/admin-password.js";
+import { ADMIN_SESSION_COOKIE, adminCookie, createAdminSession } from "../auth/admin-session.js";
 import { KnowledgeBaseService } from "../knowledge-base.service.js";
 import { SettingsService } from "../settings.service.js";
 
@@ -26,6 +28,28 @@ export async function adminRoutes(app: FastifyInstance): Promise<void> {
   const knowledgeBase = new KnowledgeBaseService(app.prisma);
   const settings = new SettingsService(app.prisma);
   const protectedRoute = { preHandler: requireAdmin };
+  const loginSchema = z.object({ password: z.string().min(1).max(512) }).strict();
+
+  app.post('/api/admin/session', async (request, reply) => {
+    if (!env.ADMIN_PASSWORD) throw new AppError('Admin operations are not configured', 503, 'ADMIN_NOT_CONFIGURED');
+    const key = `rate:admin-login:${request.ip}`;
+    const attempts = Number(await app.redis.get(key).catch(() => '0'));
+    if (attempts >= env.ADMIN_LOGIN_RATE_LIMIT_PER_15_MINUTES) throw new AppError('Too many login attempts', 429, 'LOGIN_RATE_LIMITED');
+    const parsed = loginSchema.safeParse(request.body);
+    if (!parsed.success || !isAdminPasswordValid(parsed.success ? parsed.data.password : undefined, env.ADMIN_PASSWORD)) {
+      const count = await app.redis.incr(key); if (count === 1) await app.redis.expire(key, 15 * 60);
+      throw new AppError('Unauthorized', 401, 'UNAUTHORIZED');
+    }
+    await app.redis.del(key);
+    const maxAge = env.ADMIN_SESSION_TTL_HOURS * 3600;
+    reply.header('set-cookie', adminCookie(createAdminSession(env.ADMIN_PASSWORD, env.ADMIN_SESSION_TTL_HOURS), env.NODE_ENV === 'production', maxAge));
+    return { success: true, data: { expiresInSeconds: maxAge } };
+  });
+  app.get('/api/admin/session', protectedRoute, async () => ({ success: true, data: { authenticated: true } }));
+  app.delete('/api/admin/session', async (_request, reply) => {
+    reply.header('set-cookie', `${ADMIN_SESSION_COOKIE}=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0${env.NODE_ENV === 'production' ? '; Secure' : ''}`);
+    return { success: true };
+  });
 
   app.get("/api/admin/knowledge-base", protectedRoute, async () => {
     const active = await knowledgeBase.getActiveKnowledgeBase();

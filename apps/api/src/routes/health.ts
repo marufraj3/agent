@@ -10,7 +10,8 @@ async function bounded(check: Promise<unknown>, timeoutMs = 2_000): Promise<'up'
 }
 
 export async function healthRoutes(app: FastifyInstance): Promise<void> {
-  app.get('/health', async (_request, reply) => {
+  app.get('/health', async () => ({ status: 'ok', service: 'alzeena-api', timestamp: new Date().toISOString(), uptimeSeconds: Math.floor(process.uptime()) }));
+  app.get('/ready', async (_request, reply) => {
     const [database, redis] = await Promise.all([
       bounded(app.prisma.$queryRaw`SELECT 1`),
       bounded(app.redis.ping()),

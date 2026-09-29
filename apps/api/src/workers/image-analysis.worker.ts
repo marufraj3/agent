@@ -25,7 +25,7 @@ const worker = new Worker<ImageAnalysisJobData>(IMAGE_ANALYSIS_QUEUE_NAME, async
     if (job.name === IMAGE_EXPIRY_JOB_NAME) return processor.expireRetainedImages();
     throw new PermanentImageError('UNSUPPORTED_JOB');
   } catch (error) { if (error instanceof PermanentImageError) throw new UnrecoverableError(error.message); throw error; }
-}, { connection, concurrency: 3, prefix: 'alzeena' });
+}, { connection, concurrency: env.IMAGE_WORKER_CONCURRENCY, prefix: 'alzeena' });
 await queue.upsertJobScheduler(IMAGE_EXPIRY_JOB_NAME, { every: 15 * 60_000 }, { name: IMAGE_EXPIRY_JOB_NAME, data: {} as ImageAnalysisJobData });
 worker.on('completed', (job) => logger.info({ jobId: job.id, jobName: job.name }, 'Image job completed'));
 worker.on('failed', (job, error) => logger.error({ jobId: job?.id, jobName: job?.name, errorType: error.name }, 'Image job failed'));

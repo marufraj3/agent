@@ -33,7 +33,7 @@ const followUpQueue = createFollowUpQueue();
 const audioQueue = createAudioTranscriptionQueue();
 const imageQueue = createImageAnalysisQueue();
 const outgoingQueue = createMessengerOutgoingQueue();
-await Promise.all([prisma.$connect(), controlQueue.setGlobalConcurrency(5), outgoingQueue.setGlobalConcurrency(10)]);
+await Promise.all([prisma.$connect(), controlQueue.setGlobalConcurrency(env.MESSENGER_WORKER_CONCURRENCY), outgoingQueue.setGlobalConcurrency(env.MESSENGER_SEND_WORKER_CONCURRENCY)]);
 const stopHeartbeat = startWorkerHeartbeat(connection, MESSENGER_QUEUE_NAME);
 const service = new MessengerService(
   prisma,
@@ -55,7 +55,7 @@ const worker = new Worker<MessengerJobData>(
       throw error;
     }
   },
-  { connection, concurrency: 5, prefix: 'alzeena' },
+  { connection, concurrency: env.MESSENGER_WORKER_CONCURRENCY, prefix: 'alzeena' },
 );
 
 worker.on('completed', (job) => logger.info({ event: 'MESSENGER_EVENT_PROCESSED', jobId: job.id, pageId: job.data.event.pageId, correlationId: job.data.correlationId }, 'Messenger event processed'));

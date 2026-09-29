@@ -279,6 +279,10 @@ export class ProductSyncService {
         missingFromFeedAt: null,
       };
 
+      const previousPrice = await transaction.product.findUnique({
+        where: { websiteProductId: product.websiteProductId },
+        select: { id: true, sellPrice: true, discountPrice: true, flashSellPrice: true },
+      });
       const savedProduct = await transaction.product.upsert({
         where: { websiteProductId: product.websiteProductId },
         create: {
@@ -300,6 +304,18 @@ export class ProductSyncService {
         },
         select: { id: true },
       });
+
+      const priceChanged = previousPrice && (
+        previousPrice.sellPrice.toString() !== product.sellPrice.toString() ||
+        (previousPrice.discountPrice?.toString() ?? null) !== (product.discountPrice?.toString() ?? null) ||
+        (previousPrice.flashSellPrice?.toString() ?? null) !== (product.flashSellPrice?.toString() ?? null)
+      );
+      if (priceChanged) await transaction.productPriceHistory.create({ data: {
+        productId: savedProduct.id,
+        oldSellPrice: previousPrice.sellPrice, newSellPrice: product.sellPrice,
+        oldDiscountPrice: previousPrice.discountPrice, newDiscountPrice: product.discountPrice,
+        oldFlashPrice: previousPrice.flashSellPrice, newFlashPrice: product.flashSellPrice,
+      } });
 
       for (const variation of product.variations) {
         await transaction.productVariation.upsert({
