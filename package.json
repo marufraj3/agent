@@ -1,0 +1,24 @@
+{
+  "name": "alzeena-sales-agent",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Alzeena Fashion AI sales agent foundation",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "engines": {
+    "node": ">=20.9.0",
+    "npm": ">=10.0.0"
+  },
+  "scripts": {
+    "dev:api": "npm run build --workspace=@alzeena/database && npm run dev --workspace=@alzeena/api",
+    "dev:web": "npm run dev --workspace=@alzeena/web",
+    "build": "npm run build --workspace=@alzeena/database && npm run build --workspace=@alzeena/api && npm run build --workspace=@alzeena/web",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "prisma:generate": "npm run prisma:generate --workspace=@alzeena/database",
+    "db:push": "npm run db:push --workspace=@alzeena/database",
+    "db:migrate": "npm run db:migrate --workspace=@alzeena/database",
+    "db:studio": "npm run db:studio --workspace=@alzeena/database"
+  }
+}

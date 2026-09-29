@@ -1,0 +1,42 @@
+import cors from '@fastify/cors';
+import Fastify, { type FastifyInstance } from 'fastify';
+import { env } from './config/env.js';
+import { loggerOptions } from './config/logger.js';
+import { AppError } from './errors/app-error.js';
+import { registerInfrastructure } from './infrastructure/register.js';
+import { healthRoutes } from './routes/health.js';
+
+export async function buildApp(): Promise<FastifyInstance> {
+  const app = Fastify({ logger: loggerOptions });
+
+  await app.register(cors, {
+    origin: env.FRONTEND_URL,
+    credentials: true,
+  });
+  await registerInfrastructure(app);
+  await app.register(healthRoutes);
+
+  app.setNotFoundHandler(async (_request, reply) => {
+    return reply.code(404).send({
+      error: { code: 'NOT_FOUND', message: 'Route not found' },
+    });
+  });
+
+  app.setErrorHandler(async (error, request, reply) => {
+    const isAppError = error instanceof AppError;
+    const statusCode = isAppError ? error.statusCode : 500;
+    const code = isAppError ? error.code : 'INTERNAL_ERROR';
+
+    request.log.error({ err: error }, 'Request failed');
+
+    return reply.code(statusCode).send({
+      error: {
+        code,
+        message: isAppError ? error.message : 'An unexpected error occurred',
+        requestId: request.id,
+      },
+    });
+  });
+
+  return app;
+}
