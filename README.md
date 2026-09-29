@@ -1,8 +1,8 @@
 # Alzeena Fashion Sales Agent
 
-Production-oriented foundation for the future Alzeena Fashion AI sales agent. This repository currently contains **Step 1 only**: the web application, API, PostgreSQL/Prisma, Redis/BullMQ configuration, environment validation, logging, and health checks.
+Production-oriented foundation for the future Alzeena Fashion AI sales agent. The repository currently contains **Steps 1–2**: the web application, API, infrastructure configuration, and the initial PostgreSQL/Prisma data layer.
 
-No sales, AI, messaging, product, order, conversation, handover, or administration features are implemented yet.
+Step 2 adds database models, an initial migration, an idempotent test seed, and a verification script. It does not add product synchronization, sales APIs, AI, messaging, orders, conversations, handover, or administration features.
 
 ## Architecture
 
@@ -24,7 +24,18 @@ No sales, AI, messaging, product, order, conversation, handover, or administrati
 └── tsconfig.base.json          # Shared TypeScript rules
 ```
 
-Future modules (AI/Gemini, Facebook Messenger, product sync, orders, image/voice processing, conversations, human handover, and knowledge base) should be introduced as isolated API modules and/or workers. `createQueue` in `apps/api/src/infrastructure/queue.ts` is the generic BullMQ extension point. No feature queue or worker is created in this step.
+Future modules (AI/Gemini, Facebook Messenger, product sync, orders, image/voice processing, conversations, human handover, and Knowledge Base UI) should be introduced as isolated API modules and/or workers. `createQueue` in `apps/api/src/infrastructure/queue.ts` is the generic BullMQ extension point. No feature queue or worker is created yet.
+
+## Step 2 database models
+
+- `Category` and `SubCategory` normalize website taxonomy for later filtering.
+- `Product` stores an internal UUID separately from its unique website product ID.
+- `ProductVariation` belongs to a product and de-duplicates source variations by website variation ID.
+- `KnowledgeBase` supports versioned instruction text and activation state; a PostgreSQL partial unique index permits at most one active main record. No UI or AI usage exists yet.
+- `Setting` stores non-sensitive business configuration as key/value text.
+- `SystemLog` provides structured levels, event types, JSONB metadata, and timestamp indexes.
+
+Prices use PostgreSQL `DECIMAL(12,2)`, not floating point. Sensitive values remain environment variables and must not be stored in `Setting` or `SystemLog`.
 
 ## Prerequisites
 
@@ -61,22 +72,41 @@ To also delete local database and Redis volumes, use `docker compose down -v` (t
 
 Without Docker, create a PostgreSQL database and user matching `DATABASE_URL`, start Redis, and set `DATABASE_URL` and `REDIS_URL` in `.env`.
 
-## Initialize the database
+## Initialize and verify the database
 
-The Step 1 Prisma schema intentionally has no domain models. Generate the client and synchronize the database connection with:
+Generate Prisma Client and apply the committed `20260929120000_initial_business_schema` migration:
 
 ```bash
 npm run prisma:generate
-npm run db:push
+npm run db:migrate
 ```
 
-When future schema changes need versioned migrations, use:
+The equivalent direct Prisma command from the repository root is `npx prisma migrate dev`; the root package configuration points it to the workspace schema. `npm run db:migrate` runs the same development migration workflow. For a non-development environment, apply committed migrations without creating new ones:
+
+```bash
+npm run db:migrate:deploy
+```
+
+Load the idempotent Step 2 test data and verify its required values:
+
+```bash
+npm run db:seed
+npm run db:verify
+```
+
+The verification checks product `6238`, its M/L/XL/XXL stock, pre-order status, the active Knowledge Base, and the initial settings. The seed contains placeholder business settings; review them before any production use.
+
+Open the data browser with:
+
+```bash
+npm run db:studio
+```
+
+Future schema changes should be created with a descriptive migration name:
 
 ```bash
 npm run db:migrate -- --name descriptive_migration_name
 ```
-
-Prisma Studio can be opened with `npm run db:studio`.
 
 ## Run locally
 

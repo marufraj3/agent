@@ -7,4 +7,129 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-// Domain models will be added in their respective future implementation steps.
+enum LogLevel {
+  DEBUG
+  INFO
+  WARN
+  ERROR
+  FATAL
+}
+
+model Category {
+  id                String        @id @default(uuid()) @db.Uuid
+  websiteCategoryId Int           @unique @map("website_category_id")
+  name              String        @db.VarChar(255)
+  createdAt         DateTime      @default(now()) @map("created_at")
+  updatedAt         DateTime      @updatedAt @map("updated_at")
+  products          Product[]
+  subCategories     SubCategory[]
+
+  @@index([name])
+  @@map("categories")
+}
+
+model SubCategory {
+  id                   String   @id @default(uuid()) @db.Uuid
+  websiteSubCategoryId Int      @unique @map("website_sub_category_id")
+  name                 String   @db.VarChar(255)
+  categoryRecordId     String   @map("category_record_id") @db.Uuid
+  createdAt            DateTime @default(now()) @map("created_at")
+  updatedAt            DateTime @updatedAt @map("updated_at")
+  category             Category @relation(fields: [categoryRecordId], references: [id], onDelete: Cascade)
+  products             Product[]
+
+  @@index([categoryRecordId])
+  @@index([name])
+  @@map("sub_categories")
+}
+
+model Product {
+  id                String             @id @default(uuid()) @db.Uuid
+  websiteProductId  Int                @unique @map("website_product_id")
+  productName       String             @map("product_name") @db.VarChar(255)
+  productCode       String             @map("product_code") @db.VarChar(100)
+  slug              String             @unique @db.VarChar(255)
+  productDetails    String?            @map("product_details") @db.Text
+  productImage      String?            @map("product_image") @db.Text
+  categoryId        Int?               @map("website_category_id")
+  categoryName      String?            @map("category_name") @db.VarChar(255)
+  subCategoryId     Int?               @map("website_sub_category_id")
+  subCategoryName   String?            @map("sub_category_name") @db.VarChar(255)
+  colorName         String?            @map("color_name") @db.VarChar(100)
+  productStatus     String             @default("active") @map("product_status") @db.VarChar(50)
+  sellPrice         Decimal            @map("sell_price") @db.Decimal(12, 2)
+  discountPrice     Decimal?           @map("discount_price") @db.Decimal(12, 2)
+  flashSellPrice    Decimal?           @map("flash_sell_price") @db.Decimal(12, 2)
+  isPreOrder        Boolean            @default(false) @map("is_pre_order")
+  createdAt         DateTime           @default(now()) @map("created_at")
+  updatedAt         DateTime           @updatedAt @map("updated_at")
+  lastSyncedAt      DateTime?          @map("last_synced_at")
+  category          Category?          @relation(fields: [categoryId], references: [websiteCategoryId], onDelete: SetNull, onUpdate: Cascade)
+  subCategory       SubCategory?       @relation(fields: [subCategoryId], references: [websiteSubCategoryId], onDelete: SetNull, onUpdate: Cascade)
+  variations        ProductVariation[]
+
+  @@index([productCode])
+  @@index([productName])
+  @@index([categoryId])
+  @@index([subCategoryId])
+  @@index([productStatus])
+  @@index([isPreOrder])
+  @@map("products")
+}
+
+model ProductVariation {
+  id                 String   @id @default(uuid()) @db.Uuid
+  websiteVariationId Int      @unique @map("website_variation_id")
+  productId          String   @map("product_id") @db.Uuid
+  websiteSizeId      Int      @map("website_size_id")
+  sizeName           String   @map("size_name") @db.VarChar(50)
+  stockQuantity      Int      @default(0) @map("stock_quantity")
+  active             Boolean  @default(true)
+  createdAt          DateTime @default(now()) @map("created_at")
+  updatedAt          DateTime @updatedAt @map("updated_at")
+  lastSyncedAt       DateTime? @map("last_synced_at")
+  product            Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@index([productId, active])
+  @@index([websiteSizeId])
+  @@index([sizeName])
+  @@index([stockQuantity])
+  @@map("product_variations")
+}
+
+model KnowledgeBase {
+  id        String   @id @default(uuid()) @db.Uuid
+  content   String   @db.Text
+  version   Int      @unique
+  isActive  Boolean  @default(false) @map("is_active")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@index([isActive])
+  @@map("knowledge_bases")
+}
+
+model Setting {
+  id          String   @id @default(uuid()) @db.Uuid
+  key         String   @unique @db.VarChar(100)
+  value       String   @db.Text
+  description String?  @db.VarChar(255)
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  @@map("settings")
+}
+
+model SystemLog {
+  id        String   @id @default(uuid()) @db.Uuid
+  level     LogLevel @default(INFO)
+  type      String   @db.VarChar(100)
+  message   String   @db.Text
+  metadata  Json?    @db.JsonB
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([type, createdAt])
+  @@index([level, createdAt])
+  @@index([createdAt])
+  @@map("system_logs")
+}
