@@ -10,7 +10,7 @@
     "build": "tsc -p tsconfig.json",
     "start": "node dist/server.js",
     "start:worker": "node dist/workers/product-sync.worker.js",
-    "test": "node --import tsx --test src/modules/products/__tests__/*.test.ts",
+    "test": "node --import tsx --test src/modules/*/__tests__/*.test.ts",
     "verify:product-sync": "tsx src/scripts/verify-product-sync.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },

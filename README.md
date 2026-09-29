@@ -1,8 +1,8 @@
 # Alzeena Fashion Sales Agent
 
-Production-oriented foundation for the future Alzeena Fashion AI sales agent. The repository currently contains **Steps 1–3**: the web application, API, infrastructure configuration, PostgreSQL/Prisma data layer, and local product-feed synchronization.
+Production-oriented foundation for the future Alzeena Fashion AI sales agent. The repository currently contains **Steps 1–4**: the web application, API, infrastructure configuration, PostgreSQL/Prisma data layer, local product-feed synchronization, and protected Knowledge Base/business settings management.
 
-Step 3 adds the Product Feed adapter, transactional upserts, a BullMQ worker, manual sync/status endpoints, and local search/availability services. It does not add AI, messaging, orders, conversations, handover, or a full administration dashboard.
+Step 4 adds focused admin pages and protected APIs for AI instructions and non-sensitive business settings. It does not call an AI model or add messaging, orders, conversations, handover workflows, or a full analytics dashboard.
 
 ## Architecture
 
@@ -24,7 +24,7 @@ Step 3 adds the Product Feed adapter, transactional upserts, a BullMQ worker, ma
 └── tsconfig.base.json          # Shared TypeScript rules
 ```
 
-Future modules (AI/Gemini, Facebook Messenger, orders, image/voice processing, conversations, human handover, and Knowledge Base UI) should be introduced as isolated API modules and/or workers. Product synchronization is the first isolated module and runs through its own `product-sync` BullMQ worker.
+Future modules (AI/Gemini, Facebook Messenger, orders, image/voice processing, conversations, and human handover) should be introduced as isolated API modules and/or workers. Product synchronization and admin Knowledge Base/settings management remain separate modules so dynamic catalogue data is never mixed into manually authored AI instructions.
 
 ## Step 2 database models
 
@@ -92,6 +92,39 @@ Run parser/business-rule unit tests with `npm test`. With local infrastructure r
 ```bash
 npm run verify:product-sync
 ```
+
+## Step 4 Knowledge Base and settings
+
+Admin pages:
+
+- `http://localhost:3000/admin/knowledge-base`
+- `http://localhost:3000/admin/settings`
+
+The pages ask for `ADMIN_PASSWORD`, retain it only in the browser tab's `sessionStorage`, and send it to the backend in the `x-admin-password` header. There is no public Knowledge Base endpoint. Browser requests use the Next.js `/backend-api` proxy, so database/Redis credentials and the upstream product feed URL are not exposed.
+
+Protected backend endpoints:
+
+```text
+GET /api/admin/knowledge-base
+PUT /api/admin/knowledge-base
+GET /api/admin/settings
+PUT /api/admin/settings
+```
+
+Example Knowledge Base update:
+
+```bash
+curl -X PUT http://localhost:4000/api/admin/knowledge-base \
+  -H "content-type: application/json" \
+  -H "x-admin-password: $ADMIN_PASSWORD" \
+  --data '{"content":"Your complete AI instruction text"}'
+```
+
+Each Knowledge Base save creates a new active version and retains the prior version as inactive. Content must be non-empty and is limited to 100,000 characters. System logs contain only action/version/length metadata—not the Knowledge Base text.
+
+Settings are strictly allow-listed. Delivery charges are validated as non-negative BDT amounts; environment secrets such as Gemini/Meta keys and the admin password cannot be read or updated through these APIs. Future AI context code can import `getActiveKnowledgeBase()` and `getBusinessSettings()` without coupling to HTTP routes.
+
+Run `npm run db:seed` after updating to Step 4. It installs the starter Knowledge Base only when content is absent or still equals the old test placeholder, and initializes the known setting values without overwriting later admin edits.
 
 ## Prerequisites
 
