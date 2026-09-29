@@ -48,6 +48,7 @@ const envSchema = z.object({
   MAX_AUDIO_DURATION_SECONDS: z.coerce.number().int().min(1).max(600).default(120),
   AUDIO_REQUEST_TIMEOUT_MS: z.coerce.number().int().min(1_000).max(120_000).default(20_000),
   VOICE_TRANSCRIPTION_LOW_CONFIDENCE: z.coerce.number().min(0).max(1).default(0.6),
+  ORDER_API_TIMEOUT_MS: z.coerce.number().int().min(1_000).max(120_000).default(15_000),
   WEBSITE_API_BASE_URL: z.url().default('https://sells.alzeena.com.bd/public/api'),
   PRODUCT_FEED_TIMEOUT_MS: z.coerce.number().int().min(1_000).max(120_000).default(30_000),
   PRODUCT_FEED_RETRIES: z.coerce.number().int().min(0).max(5).default(3),

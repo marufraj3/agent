@@ -9,6 +9,10 @@ import { AudioFetchError } from '../../audio/audio.service.js';
 import { AudioValidationError } from '../../audio/audio-validation.service.js';
 import { createImageProductService } from '../../images/image.factory.js';
 import { ImageFetchError } from '../../images/image.service.js';
+import { OrderConversationService } from '../../orders/order-conversation.service.js';
+import { OrderService } from '../../orders/order.service.js';
+import { OrderEngineError } from '../../orders/order.types.js';
+import { WebsiteOrderApiClient } from '../../orders/website-order-api.client.js';
 import { ImageValidationError } from '../../images/image-validation.service.js';
 import { ChatService, ConversationAccessError } from '../chat.service.js';
 import { chatRequestSchema } from '../conversation.schemas.js';
@@ -22,6 +26,13 @@ export async function chatRoutes(app: FastifyInstance): Promise<void> {
     env.AI_MAX_PRODUCTS,
     createImageProductService(app.prisma),
     createVoiceUnderstandingService(app.prisma),
+    new OrderConversationService(
+      new OrderService(
+        app.prisma,
+        new WebsiteOrderApiClient(env.ORDER_API_TIMEOUT_MS),
+        app.log,
+      ),
+    ),
   );
 
   app.post(
@@ -65,6 +76,9 @@ export async function chatRoutes(app: FastifyInstance): Promise<void> {
         }
         if (error instanceof AudioFetchError) {
           throw new AppError(error.message, 422, 'AUDIO_FETCH_FAILED');
+        }
+        if (error instanceof OrderEngineError) {
+          throw new AppError(error.message, error.statusCode, error.code);
         }
         request.log.error(
           { errorType: error instanceof Error ? error.name : 'UnknownError' },

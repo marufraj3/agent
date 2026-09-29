@@ -10,6 +10,7 @@ export const chatRequestSchema = z
         name: z.string().trim().max(255).nullable().optional(),
         phone: z.string().trim().max(50).nullable().optional(),
         email: z.email().max(320).nullable().optional(),
+        address: z.string().trim().max(2_000).nullable().optional(),
         platform: z.string().trim().min(1).max(50),
         platformUserId: z.string().trim().min(1).max(255),
         language: z.string().trim().max(20).nullable().optional(),

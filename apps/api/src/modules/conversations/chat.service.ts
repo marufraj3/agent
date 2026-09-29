@@ -5,6 +5,7 @@ import { transcriptionSchema, type AudioInput, type Transcription } from '../aud
 import type { VoiceUnderstandingService } from '../audio/voice-understanding.service.js';
 import type { ImageProductService } from '../images/image-product.service.js';
 import type { ImageInput } from '../images/image.types.js';
+import type { OrderConversationService } from '../orders/order-conversation.service.js';
 import { ProductCatalogService } from '../products/product-catalog.service.js';
 import type { ConversationChannelName } from './conversation.types.js';
 import { ConversationContextService } from './conversation-context.service.js';
@@ -75,6 +76,7 @@ export class ChatService {
     private readonly maxProductIds: number,
     private readonly imageProducts?: ImageProductService,
     private readonly voice?: VoiceUnderstandingService,
+    private readonly orderConversation?: OrderConversationService,
   ) {
     this.customers = new CustomerService(prisma);
     this.conversations = new ConversationService(prisma);
@@ -220,20 +222,35 @@ export class ChatService {
       });
       if (!memory) throw new Error('Conversation context could not be built');
 
-      const language = ['bn', 'banglish', 'en'].includes(customer.language ?? '')
-        ? (customer.language as 'bn' | 'banglish' | 'en')
-        : 'auto';
-      response = await this.ai.respond({
+      const contextProductIds = [
+        ...new Set([...imageProductIds, ...voiceProductIds, ...memory.activeProductIds]),
+      ].slice(0, this.maxProductIds);
+      response = await this.orderConversation?.handle({
         message: customerMessage,
         conversationId: conversation.id,
-        customerId: customer.id,
-        language,
-        conversationHistory: memory.history,
-        contextProductIds: [
-          ...new Set([...imageProductIds, ...voiceProductIds, ...memory.activeProductIds]),
-        ].slice(0, this.maxProductIds),
-        customerContext: { name: customer.name, language: customer.language },
-      });
+        customer: {
+          id: customer.id,
+          name: customer.name,
+          phone: customer.phone,
+          address: (customer as typeof customer & { address?: string | null }).address,
+        },
+        productIds: contextProductIds,
+      }) ?? undefined;
+
+      if (!response) {
+        const language = ['bn', 'banglish', 'en'].includes(customer.language ?? '')
+          ? (customer.language as 'bn' | 'banglish' | 'en')
+          : 'auto';
+        response = await this.ai.respond({
+          message: customerMessage,
+          conversationId: conversation.id,
+          customerId: customer.id,
+          language,
+          conversationHistory: memory.history,
+          contextProductIds,
+          customerContext: { name: customer.name, language: customer.language },
+        });
+      }
     }
 
     await this.messages.addMessage({
@@ -246,6 +263,14 @@ export class ChatService {
         confidence: response.confidence,
         requiresHuman: response.requiresHuman,
         action: response.action,
+        ...(response.orderAction
+          ? {
+              orderAction: {
+                type: response.orderAction.type,
+                orderId: response.orderAction.orderId,
+              },
+            }
+          : {}),
         productIds: response.productIds,
         products: response.products.map((product) => ({
           id: product.id,

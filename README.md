@@ -1,8 +1,8 @@
 # Alzeena Fashion Sales Agent
 
-Production-oriented foundation for the future Alzeena Fashion AI sales agent. The repository currently contains **Steps 1–8**: the web application, API, infrastructure configuration, PostgreSQL/Prisma data layer, product-feed synchronization, protected Knowledge Base/business settings management, the modular Gemini-backed AI core, persistent conversation memory, product photo recognition, and voice-message understanding.
+Production-oriented foundation for the Alzeena Fashion AI sales agent. The repository currently contains **Steps 1–9**: the web application, API, infrastructure configuration, PostgreSQL/Prisma data layer, product-feed synchronization, protected Knowledge Base/business settings management, the modular Gemini-backed AI core, persistent conversation memory, product photo recognition, voice-message understanding, and the backend-controlled Order Engine with Alzeena Website Order API integration.
 
-Step 8 adds validated audio input, provider-independent speech-to-text, Gemini audio transcription, confidence safeguards, local product-code verification, and audio-aware conversation memory. It does not add Facebook/Meta transport, voice replies, orders, a human inbox, analytics, or marketing automation.
+Step 9 adds deterministic order drafts, current-catalogue validation, explicit confirmation, submission concurrency protection, safe external-outcome handling, and protected order administration. It does not add Facebook/Meta transport, voice replies, a human inbox, courier workflows, payments, refunds, analytics, or marketing automation.
 
 ## Architecture
 
@@ -287,6 +287,40 @@ Spoken code normalization is deliberately conservative. Candidates such as “TX
 The `/admin/ai-test` page now supports audio upload, audio URL playback, transcription language/confidence, AI response, and follow-up memory. Conversation details display an audio indicator and saved transcription; no temporary server path is exposed.
 
 No database migration is required for Step 8 because the existing `MessageType.AUDIO` and JSON metadata support voice messages. Configure `GEMINI_API_KEY`, apply existing migrations, and synchronize products before end-to-end testing.
+
+## Step 9 Order Engine and Website Order API
+
+The Order Engine is a dedicated backend module. Conversation and admin controllers call `OrderService`; neither controllers nor model output can construct or send a raw website order. Product IDs, real website variation IDs, effective prices, status, stock, pre-order state, delivery charges, quantities, and totals are resolved or calculated from the current local database with Prisma decimals.
+
+The persisted flow is:
+
+```text
+text/image/voice product context → validated draft and items → collect only missing fields
+  → refresh price + validate stock → complete summary → persisted explicit confirmation
+  → atomic one-request submission claim → Alzeena Website Order API
+  → success with external ID | known safe failure | unknown outcome (retry blocked)
+```
+
+A short confirmation such as “জি” is recognized only for an order already in `awaiting_confirmation` after a complete summary. Broad phrases such as “দেন” or “একটা চাই” never submit an order. Stock is checked before confirmation and again before submission. Active pre-order variations may be ordered with zero stock; normal products cannot exceed current stock. A price change requires a new summary and confirmation.
+
+Protected administration is available at `/admin/orders` and `/admin/orders/:id`. Backend endpoints are:
+
+```text
+GET  /api/admin/orders
+GET  /api/admin/orders/:id
+POST /api/admin/orders/:id/retry
+```
+
+Retry is an explicit admin action and is enabled only for a safely known failure after full revalidation. Timeout, network, HTTP 5xx, malformed-response, and uncertain local persistence outcomes are marked unknown and cannot be blindly retried. A unique submission reference and atomic claim prevent concurrent duplicate requests.
+
+Apply `20260929213000_order_engine` before using orders, then regenerate Prisma Client:
+
+```bash
+npm run db:migrate:deploy
+npm run prisma:generate
+```
+
+Configure delivery charges, Website API base URL, page ID, delivery-company ID, UTM source, and UTM campaign through protected Business Settings. `ORDER_API_TIMEOUT_MS` is environment-controlled. No API credential or customer password is logged; the normalized customer phone is sent as the website API password only because that external contract requires it.
 
 ## Prerequisites
 

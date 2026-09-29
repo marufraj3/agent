@@ -67,7 +67,18 @@ export interface AIProductReference {
   matchReasons?: string[];
 }
 
+export interface AIOrderAction {
+  type:
+    | 'create_order'
+    | 'update_order'
+    | 'confirm_order'
+    | 'cancel_order'
+    | 'request_order_information';
+  orderId: string;
+}
+
 export interface AIResponse extends ModelAIResponse {
   products: AIProductReference[];
   source: 'rules' | 'gemini' | 'fallback';
+  orderAction?: AIOrderAction;
 }

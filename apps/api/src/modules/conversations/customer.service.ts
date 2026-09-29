@@ -6,6 +6,7 @@ export interface CreateCustomerInput {
   name?: string | null;
   phone?: string | null;
   email?: string | null;
+  address?: string | null;
   platform?: string | null;
   platformUserId?: string | null;
   language?: string | null;
@@ -31,6 +32,7 @@ function customerData(input: CreateCustomerInput) {
     name: clean(input.name),
     phone: clean(input.phone),
     email: clean(input.email)?.toLowerCase(),
+    address: clean(input.address),
     platform: clean(input.platform)?.toLowerCase(),
     platformUserId: clean(input.platformUserId),
     language: clean(input.language)?.toLowerCase(),
@@ -72,6 +74,7 @@ export class CustomerService {
           ...(data.name !== undefined ? { name: data.name } : {}),
           ...(data.phone !== undefined ? { phone: data.phone } : {}),
           ...(data.email !== undefined ? { email: data.email } : {}),
+          ...(data.address !== undefined ? { address: data.address } : {}),
           ...(data.language !== undefined ? { language: data.language } : {}),
           ...(data.metadata !== undefined ? { metadata: data.metadata } : {}),
         },
@@ -85,6 +88,7 @@ export class CustomerService {
           ...(data.name !== undefined ? { name: data.name } : {}),
           ...(data.phone !== undefined ? { phone: data.phone } : {}),
           ...(data.email !== undefined ? { email: data.email } : {}),
+          ...(data.address !== undefined ? { address: data.address } : {}),
           ...(data.language !== undefined ? { language: data.language } : {}),
           ...(data.metadata !== undefined ? { metadata: data.metadata } : {}),
         },

@@ -1,4 +1,5 @@
 import type { BusinessSettings } from '../admin/settings.service.js';
+import { resolveEffectivePrice } from '../products/effective-price.js';
 import type { AIResponse } from './ai.types.js';
 import type { AIRouteDecision } from './ai-router.js';
 import type { AIProductContext } from './product-context.service.js';
@@ -12,16 +13,8 @@ function productReferences(products: AIProductContext[]) {
   }));
 }
 
-function positiveMoney(value: string | null): value is string {
-  return value !== null && !/^0(?:\.0+)?$/.test(value);
-}
-
 function priceText(product: AIProductContext['product'], language: AIRouteDecision['language']): string {
-  const activePrice = positiveMoney(product.flashSellPrice)
-    ? product.flashSellPrice
-    : positiveMoney(product.discountPrice)
-      ? product.discountPrice
-      : product.sellPrice;
+  const activePrice = resolveEffectivePrice(product);
   const original = activePrice !== product.sellPrice ? product.sellPrice : null;
 
   if (language === 'bn') {

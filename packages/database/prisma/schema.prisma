@@ -69,6 +69,7 @@ model Product {
   category          Category?          @relation(fields: [categoryId], references: [websiteCategoryId], onDelete: SetNull, onUpdate: Cascade)
   subCategory       SubCategory?       @relation(fields: [subCategoryId], references: [websiteSubCategoryId], onDelete: SetNull, onUpdate: Cascade)
   variations        ProductVariation[]
+  orderItems        OrderItem[]
 
   @@index([productCode])
   @@index([productName])
@@ -91,7 +92,8 @@ model ProductVariation {
   createdAt          DateTime @default(now()) @map("created_at")
   updatedAt          DateTime @updatedAt @map("updated_at")
   lastSyncedAt       DateTime? @map("last_synced_at")
-  product            Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  product            Product     @relation(fields: [productId], references: [id], onDelete: Cascade)
+  orderItems         OrderItem[]
 
   @@index([productId, active])
   @@index([websiteSizeId])
@@ -170,6 +172,7 @@ model Customer {
   name           String?        @db.VarChar(255)
   phone          String?        @db.VarChar(50)
   email          String?        @db.VarChar(320)
+  address        String?        @db.Text
   platform       String?        @db.VarChar(50)
   platformUserId String?        @map("platform_user_id") @db.VarChar(255)
   language       String?        @db.VarChar(20)
@@ -178,6 +181,7 @@ model Customer {
   updatedAt      DateTime       @updatedAt @map("updated_at")
   conversations  Conversation[]
   messages       Message[]
+  orders         Order[]
 
   @@unique([platform, platformUserId])
   @@index([platformUserId])
@@ -196,6 +200,7 @@ model Conversation {
   updatedAt     DateTime           @updatedAt @map("updated_at")
   customer      Customer           @relation(fields: [customerId], references: [id], onDelete: Cascade)
   messages      Message[]
+  orders        Order[]
 
   @@index([customerId, status, lastMessageAt])
   @@index([channel, status, lastMessageAt])
@@ -219,4 +224,106 @@ model Message {
   @@index([customerId, createdAt])
   @@index([createdAt])
   @@map("messages")
+}
+
+enum OrderStatus {
+  DRAFT                 @map("draft")
+  AWAITING_INFORMATION  @map("awaiting_information")
+  AWAITING_CONFIRMATION @map("awaiting_confirmation")
+  CONFIRMED             @map("confirmed")
+  SUBMITTED             @map("submitted")
+  COMPLETED             @map("completed")
+  FAILED                @map("failed")
+  CANCELLED             @map("cancelled")
+}
+
+enum OrderConfirmationStatus {
+  PENDING   @map("pending")
+  CONFIRMED @map("confirmed")
+  REJECTED  @map("rejected")
+}
+
+enum OrderSource {
+  AI        @map("ai")
+  TEST      @map("test")
+  MESSENGER @map("messenger")
+  WEB       @map("web")
+}
+
+enum DeliveryLocation {
+  DHAKA         @map("dhaka")
+  OUTSIDE_DHAKA @map("outside_dhaka")
+}
+
+enum OrderSubmissionResult {
+  NOT_ATTEMPTED @map("not_attempted")
+  IN_PROGRESS   @map("in_progress")
+  SUCCEEDED     @map("succeeded")
+  KNOWN_FAILURE @map("known_failure")
+  UNKNOWN       @map("unknown")
+}
+
+model Order {
+  id                 String                  @id @default(uuid()) @db.Uuid
+  orderCode          String?                 @map("order_code") @db.VarChar(100)
+  customerId         String                  @map("customer_id") @db.Uuid
+  conversationId     String                  @map("conversation_id") @db.Uuid
+  status             OrderStatus             @default(DRAFT)
+  confirmationStatus OrderConfirmationStatus @default(PENDING) @map("confirmation_status")
+  confirmationText   String?                 @map("confirmation_text") @db.VarChar(100)
+  confirmedAt        DateTime?               @map("confirmed_at")
+  source             OrderSource             @default(AI)
+  deliveryLocation   DeliveryLocation?       @map("delivery_location")
+  totalQuantity      Int                     @default(0) @map("total_quantity")
+  subtotal           Decimal                 @default(0) @db.Decimal(12, 2)
+  deliveryCharge     Decimal                 @default(0) @map("delivery_charge") @db.Decimal(12, 2)
+  totalAmount        Decimal                 @default(0) @map("total_amount") @db.Decimal(12, 2)
+  currency           String                  @default("BDT") @db.VarChar(3)
+  externalOrderId    String?                 @unique @map("external_order_id") @db.VarChar(255)
+  externalResponse   Json?                   @map("external_response") @db.JsonB
+  customerSnapshot   Json                    @map("customer_snapshot") @db.JsonB
+  draftContext       Json?                   @map("draft_context") @db.JsonB
+  submissionReference String                 @unique @default(uuid()) @map("submission_reference") @db.Uuid
+  submissionResult   OrderSubmissionResult   @default(NOT_ATTEMPTED) @map("submission_result")
+  submissionAttemptedAt DateTime?             @map("submission_attempted_at")
+  failureCode        String?                  @map("failure_code") @db.VarChar(100)
+  failureMessage     String?                  @map("failure_message") @db.VarChar(500)
+  createdAt          DateTime                 @default(now()) @map("created_at")
+  updatedAt          DateTime                 @updatedAt @map("updated_at")
+  customer           Customer                 @relation(fields: [customerId], references: [id], onDelete: Restrict)
+  conversation       Conversation             @relation(fields: [conversationId], references: [id], onDelete: Restrict)
+  items              OrderItem[]
+
+  @@index([customerId, createdAt])
+  @@index([conversationId, status, updatedAt])
+  @@index([status, createdAt])
+  @@index([submissionResult, updatedAt])
+  @@map("orders")
+}
+
+model OrderItem {
+  id                 String           @id @default(uuid()) @db.Uuid
+  orderId            String           @map("order_id") @db.Uuid
+  productId          String           @map("product_id") @db.Uuid
+  variationId        String           @map("variation_id") @db.Uuid
+  websiteProductId   Int              @map("website_product_id")
+  websiteVariationId Int              @map("website_variation_id")
+  productName        String           @map("product_name") @db.VarChar(255)
+  productCode        String           @map("product_code") @db.VarChar(100)
+  variationSize      String           @map("variation_size") @db.VarChar(50)
+  quantity           Int
+  unitPrice          Decimal          @map("unit_price") @db.Decimal(12, 2)
+  lineTotal          Decimal          @map("line_total") @db.Decimal(12, 2)
+  createdAt          DateTime         @default(now()) @map("created_at")
+  updatedAt          DateTime         @updatedAt @map("updated_at")
+  order              Order            @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  product            Product          @relation(fields: [productId], references: [id], onDelete: Restrict)
+  variation          ProductVariation @relation(fields: [variationId], references: [id], onDelete: Restrict)
+
+  @@unique([orderId, variationId])
+  @@index([orderId])
+  @@index([productId])
+  @@index([variationId])
+  @@index([websiteProductId])
+  @@map("order_items")
 }
