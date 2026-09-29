@@ -40,14 +40,17 @@ export class ImageService {
 
     const url = input.url!;
     const cacheKey = `${url}|${input.mimeType ?? ''}`;
-    const cached = this.urlCache.get(cacheKey);
+    const cacheable = input.source !== 'messenger';
+    const cached = cacheable ? this.urlCache.get(cacheKey) : undefined;
     if (cached && cached.expiresAt > Date.now()) {
       return { ...cached.image, source: input.source };
     }
 
     const image = await this.download(url, input.mimeType, input.source);
-    if (this.urlCache.size >= 10) this.urlCache.delete(this.urlCache.keys().next().value ?? '');
-    this.urlCache.set(cacheKey, { image, expiresAt: Date.now() + 5 * 60_000 });
+    if (cacheable) {
+      if (this.urlCache.size >= 10) this.urlCache.delete(this.urlCache.keys().next().value ?? '');
+      this.urlCache.set(cacheKey, { image, expiresAt: Date.now() + 5 * 60_000 });
+    }
     return image;
   }
 
@@ -152,11 +155,14 @@ export class ImageService {
     mimeType: PreparedImage['mimeType'],
     source: string,
   ): PreparedImage {
+    const dimensions = this.validation.dimensions(data, mimeType);
     return {
       data,
       base64: data.toString('base64'),
       mimeType,
       sizeBytes: data.length,
+      width: dimensions?.width ?? null,
+      height: dimensions?.height ?? null,
       sha256: createHash('sha256').update(data).digest('hex'),
       source,
       temporary: true,

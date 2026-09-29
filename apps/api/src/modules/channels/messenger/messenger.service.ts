@@ -3,6 +3,7 @@ import type { Redis } from 'ioredis';
 import type { ChatService } from '../../conversations/chat.service.js';
 import { MessageService } from '../../conversations/message.service.js';
 import { AudioRateLimitError, type AudioIngestionService } from '../../audio/audio-ingestion.service.js';
+import type { ImageIngestionService } from '../../images/image-ingestion.service.js';
 import { MessengerSender } from './messenger.sender.js';
 import type { MessengerJobData, NormalizedMessengerEvent } from './messenger.types.js';
 
@@ -22,6 +23,7 @@ export class MessengerService {
     private readonly sender: MessengerSender,
     private readonly redis?: Redis,
     private readonly audioIngestion?: AudioIngestionService,
+    private readonly imageIngestion?: ImageIngestionService,
   ) {
     this.db = prisma as any;
     this.messages = new MessageService(prisma);
@@ -68,14 +70,17 @@ export class MessengerService {
           return this.deliver(log.id, assistant.id, data.event.senderId, assistant.content);
         }
       }
+      if (data.event.messageType === 'image') {
+        if (!this.imageIngestion) throw new MessengerProcessingError('Image ingestion is unavailable', true);
+        const ingested = await this.imageIngestion.ingest(data.event, log.id, data.requestId);
+        await this.db.messengerEventLog.update({ where: { id: log.id }, data: { status: 'QUEUED', errorMessage: null } });
+        return { queued: true, messageId: ingested.messageId };
+      }
       const result = await this.chat.send({
         customer: { platform: 'messenger', platformUserId: data.event.senderId },
         channel: 'messenger',
         message: data.event.messageType === 'text' || data.event.messageType === 'unsupported'
           ? data.event.text
-          : undefined,
-        image: data.event.messageType === 'image' && data.event.attachmentUrl
-          ? { type: 'image', url: data.event.attachmentUrl, source: 'messenger' }
           : undefined,
         externalMessageId: data.event.messageId,
         sourceMetadata: { ...this.inboundMetadata(data.event), ...(data.requestId ? { requestId: data.requestId } : {}) },

@@ -144,7 +144,7 @@ export class AudioTranscriptionProcessor {
     const eventLog = await this.db.messengerEventLog.findUnique({ where: { id: data.eventLogId } });
     if (eventLog?.localOutboundMessageId && eventLog.status === 'PROCESSED') return { duplicate: true };
     if (eventLog?.localOutboundMessageId) return this.retryDelivery(eventLog, data.senderId);
-    const lockKey = `audio-batch:${data.conversationId}`;
+    const lockKey = `conversation:processing:messenger:${data.senderId}`;
     const token = `${data.eventLogId}:${Date.now()}`;
     const locked = await this.redis.set(lockKey, token, 'PX', 90_000, 'NX');
     if (!locked) throw new Error('Audio batch is already processing');

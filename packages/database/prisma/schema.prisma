@@ -378,6 +378,8 @@ model Message {
   conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
   customer       Customer?    @relation(fields: [customerId], references: [id], onDelete: SetNull)
   audioTranscription AudioTranscription?
+  imageProcessing   ImageProcessing?
+  imageFeedback     ImageMatchFeedback[]
 
   @@index([conversationId, createdAt])
   @@index([customerId, createdAt])
@@ -425,6 +427,76 @@ model AudioTranscription {
   @@index([status, createdAt])
   @@index([retainedUntil])
   @@map("audio_transcriptions")
+}
+
+enum ImageProcessingStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  FAILED
+  UNSUPPORTED
+  EXPIRED
+}
+
+enum ImageMatchFeedbackType {
+  AI_MATCH
+  ADMIN_CORRECTED
+  CUSTOMER_CONFIRMED
+  CUSTOMER_REJECTED
+}
+
+model ImageProcessing {
+  id                  String                @id @default(uuid()) @db.Uuid
+  messageId           String                @unique @map("message_id") @db.Uuid
+  providerUrl         String?               @map("provider_url") @db.Text
+  sourceMimeType      String?               @map("source_mime_type") @db.VarChar(100)
+  detectedMimeType    String?               @map("detected_mime_type") @db.VarChar(100)
+  fileSizeBytes       Int?                  @map("file_size_bytes")
+  width               Int?
+  height              Int?
+  imageHash           String?               @map("image_hash") @db.VarChar(64)
+  status              ImageProcessingStatus @default(PENDING)
+  analysisStatus      String?               @map("analysis_status") @db.VarChar(50)
+  analysisResult      Json?                 @map("analysis_result") @db.JsonB
+  candidates          Json?                 @db.JsonB
+  confidenceLevel     String?               @map("confidence_level") @db.VarChar(20)
+  selectedProductId   Int?                  @map("selected_product_id")
+  provider            String?               @db.VarChar(50)
+  model               String?               @db.VarChar(100)
+  attemptCount        Int                   @default(0) @map("attempt_count")
+  errorCode           String?               @map("error_code") @db.VarChar(100)
+  visionDurationMs    Int?                  @map("vision_duration_ms")
+  matchingDurationMs  Int?                  @map("matching_duration_ms")
+  aiDurationMs        Int?                  @map("ai_duration_ms")
+  totalDurationMs     Int?                  @map("total_duration_ms")
+  processingStartedAt DateTime?             @map("processing_started_at")
+  analyzedAt          DateTime?             @map("analyzed_at")
+  aiProcessedAt       DateTime?             @map("ai_processed_at")
+  retainedUntil       DateTime?             @map("retained_until")
+  createdAt           DateTime              @default(now()) @map("created_at")
+  updatedAt           DateTime              @updatedAt @map("updated_at")
+  message             Message               @relation(fields: [messageId], references: [id], onDelete: Cascade)
+
+  @@index([status, createdAt])
+  @@index([imageHash])
+  @@index([retainedUntil])
+  @@map("image_processing")
+}
+
+model ImageMatchFeedback {
+  id                 String                 @id @default(uuid()) @db.Uuid
+  messageId          String                 @map("message_id") @db.Uuid
+  type               ImageMatchFeedbackType
+  aiProductId        Int?                   @map("ai_product_id")
+  correctedProductId Int?                   @map("corrected_product_id")
+  actor              String?                @db.VarChar(100)
+  metadata           Json?                  @db.JsonB
+  createdAt          DateTime               @default(now()) @map("created_at")
+  message            Message                @relation(fields: [messageId], references: [id], onDelete: Cascade)
+
+  @@index([messageId, createdAt])
+  @@index([type, createdAt])
+  @@map("image_match_feedback")
 }
 
 enum HandoverReason {

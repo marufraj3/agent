@@ -571,8 +571,12 @@ Run the compiled backend with `npm run start --workspace=@alzeena/api`. Run the 
 | `AI_MAX_PRODUCTS` | Maximum relevant local products in model context | Used |
 | `AI_TEST_RATE_LIMIT_PER_MINUTE` | Per-process protected AI endpoint rate limit | Used |
 | `CONVERSATION_HISTORY_LIMIT` | Maximum recent persisted messages loaded into memory | Used |
-| `MAX_IMAGE_SIZE_MB` | Maximum downloaded or uploaded image size | Used |
+| `MAX_IMAGE_SIZE_MB` | Legacy maximum downloaded or uploaded image size | Used by direct API |
+| `IMAGE_MAX_FILE_SIZE`, `IMAGE_MAX_DIMENSION` | Queued image byte and dimension limits | Used by image worker |
 | `IMAGE_REQUEST_TIMEOUT_MS` | Timeout for public image URL downloads | Used |
+| `VISION_PROVIDER`, `VISION_MODEL`, `VISION_TIMEOUT` | Server-only multimodal provider configuration | Used by image worker |
+| `IMAGE_MATCH_CANDIDATES` | Maximum local Product DB candidates | Used |
+| `IMAGE_RETENTION_HOURS` | Optional retained provider image window for admin debugging | Used |
 | `IMAGE_MATCH_HIGH_THRESHOLD` | Automatic product-selection confidence threshold | Used |
 | `IMAGE_MATCH_MEDIUM_THRESHOLD` | Candidate/clarification confidence threshold | Used |
 | `MAX_AUDIO_SIZE_MB` | Maximum downloaded or uploaded audio size | Used |
@@ -617,6 +621,7 @@ Run workers separately from the API:
 npm run start:worker --workspace=@alzeena/api
 npm run start:messenger-worker --workspace=@alzeena/api
 npm run start:audio-worker --workspace=@alzeena/api
+npm run start:image-worker --workspace=@alzeena/api
 npm run start:followup-worker --workspace=@alzeena/api
 ```
 
@@ -672,3 +677,11 @@ Apply migration `20260929220000_admin_dashboard` to create and seed `quick_repli
 Messenger audio ingestion creates the ordinary inbound `Message` plus one linked `AudioTranscription` lifecycle record, enqueues only identifiers on `audio-transcription`, and returns control to the Messenger worker. The audio worker securely downloads and validates bounded audio, transcribes through `SpeechToTextProvider`, preserves the original transcript and nullable provider confidence, stores normalization separately, and clears the provider URL by default. No audio BLOB or internal file path is stored.
 
 Completed consecutive voice notes are merged after a short debounce and enter the same `ChatService`, Product DB, Knowledge Base, Order Engine, customer memory, follow-up, and handover orchestration as text/image messages. Each original transcript remains on its own lifecycle record. Temporary dependency failures use three exponential retries; permanent validation failures do not retry. Repeated failures can hand over to an admin, while customer responses stay non-technical. Start `audio-transcription.worker.ts` separately and apply migration `20260930023000_voice_audio_understanding` before enabling voice processing. Admin Inbox shows status, language, duration, retained playback, and an admin-only re-transcribe action while the source remains available.
+
+## Step 17 queued image/product understanding
+
+Messenger image webhooks persist an ordinary image `Message` plus a linked `ImageProcessing` lifecycle, then enqueue identifier-only work on `image-analysis` before acknowledging. The standalone worker performs SSRF-safe bounded download, signature/MIME/dimension validation, SHA-256 fingerprinting, structured vision/OCR through `VisionProvider`, and local Product DB candidate matching. Gemini never supplies live commerce facts: current price, stock, sizes, and orderability are reloaded from the Product DB before the unified `ChatService` and Order Engine run.
+
+Structured extraction supports screenshots, product names/codes, nullable OCR confidence, visual attributes, size charts, and numbered multi-product images. `ImageProductMatcher` currently uses exact code/name and attribute scoring with a configurable candidate limit; it is replaceable by a future embedding-backed matcher without deploying vector infrastructure now. Medium/low matches clarify instead of guessing. Image/OCR text is explicitly untrusted and cannot override system rules.
+
+Images are not stored as database BLOBs. Messenger buffers bypass the URL cache, temporary data is released after processing, and provider URLs are removed by default or retained briefly with `IMAGE_RETENTION_HOURS`. Admin Inbox exposes preview, extraction, candidates, selected match, timings, re-analysis, manual correction, and feedback history. Apply `20260930043000_image_product_understanding` and run `start:image-worker` before enabling queued image handling.

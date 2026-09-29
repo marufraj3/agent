@@ -196,6 +196,7 @@ export class AIService {
         customer: input.customerContext,
         conversationSummary: input.conversationSummary,
         salesState: input.salesState,
+        imageContext: input.imageContext,
         history,
         customerMessage: input.message,
         detectedLanguage: decision.language,

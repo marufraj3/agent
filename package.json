@@ -21,6 +21,7 @@
     "dev:messenger-worker": "npm run build --workspace=@alzeena/database && npm run dev:messenger-worker --workspace=@alzeena/api",
     "dev:followup-worker": "npm run build --workspace=@alzeena/database && npm run dev:followup-worker --workspace=@alzeena/api",
     "dev:audio-worker": "npm run build --workspace=@alzeena/database && npm run dev:audio-worker --workspace=@alzeena/api",
+    "dev:image-worker": "npm run build --workspace=@alzeena/database && npm run dev:image-worker --workspace=@alzeena/api",
     "dev:web": "npm run dev --workspace=@alzeena/web",
     "build": "npm run build --workspace=@alzeena/database && npm run build --workspace=@alzeena/api && npm run build --workspace=@alzeena/web",
     "typecheck": "npm run typecheck --workspaces --if-present",

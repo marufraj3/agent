@@ -106,11 +106,20 @@ export class AdminInboxService {
         customer: true,
         messages: {
           orderBy: [{ createdAt: 'desc' }, { id: 'desc' }], skip: (messagePage - 1) * messageLimit, take: messageLimit,
-          include: { audioTranscription: { select: {
-            status: true, originalTranscript: true, normalizedTranscript: true, language: true,
-            confidence: true, durationSeconds: true, fileSizeBytes: true, provider: true, model: true,
-            sttDurationMs: true, aiDurationMs: true, totalDurationMs: true, transcribedAt: true, retainedUntil: true,
-          } } },
+          include: {
+            audioTranscription: { select: {
+              status: true, originalTranscript: true, normalizedTranscript: true, language: true,
+              confidence: true, durationSeconds: true, fileSizeBytes: true, provider: true, model: true,
+              sttDurationMs: true, aiDurationMs: true, totalDurationMs: true, transcribedAt: true, retainedUntil: true,
+            } },
+            imageProcessing: { select: {
+              status: true, fileSizeBytes: true, width: true, height: true, imageHash: true,
+              analysisStatus: true, analysisResult: true, candidates: true, confidenceLevel: true,
+              selectedProductId: true, provider: true, model: true, visionDurationMs: true,
+              matchingDurationMs: true, aiDurationMs: true, totalDurationMs: true, retainedUntil: true,
+            } },
+            imageFeedback: { orderBy: { createdAt: 'desc' }, take: 10 },
+          },
         },
         handovers: { orderBy: { createdAt: 'desc' }, take: 20 },
         orders: { orderBy: { createdAt: 'desc' }, take: 20, include: { items: true } },

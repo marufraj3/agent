@@ -4,7 +4,7 @@ import type { AIResponse } from '../ai/ai.types.js';
 import { extractEntities } from '../ai/entity-extractor.js';
 import { transcriptionSchema, type AudioInput, type Transcription } from '../audio/audio.types.js';
 import type { VoiceUnderstandingService } from '../audio/voice-understanding.service.js';
-import type { ImageProductService } from '../images/image-product.service.js';
+import type { ImageProductResult, ImageProductService } from '../images/image-product.service.js';
 import type { ImageInput } from '../images/image.types.js';
 import type { HandoverTool } from '../ai/sales-tool.interfaces.js';
 import type { CustomerJourneyService } from '../automation/customer-journey.service.js';
@@ -26,6 +26,8 @@ export interface ChatInput {
   };
   message?: string;
   image?: ImageInput;
+  /** Server-internal result produced by the dedicated image worker. */
+  imageRecognition?: ImageProductResult;
   audio?: AudioInput;
   /** Server-internal transcript produced by the dedicated audio worker. */
   audioTranscription?: Transcription;
@@ -80,6 +82,25 @@ function voiceClarificationResponse(
     productIds: [],
     products: [],
     source: 'fallback',
+  };
+}
+
+function imageClarificationResponse(result: ImageProductResult): AIResponse {
+  if (result.confidenceLevel === 'medium' && result.matches.length) {
+    const options = result.matches.slice(0, 5).map((match, index) => `${index + 1}) ${match.product.productName} (${match.product.productCode})`).join(', ');
+    return {
+      reply: `ছবিটা দেখে কয়েকটি প্রোডাক্টের সাথে মিল পাচ্ছি: ${options}। কোনটিকে বোঝাচ্ছেন?`,
+      intent: 'product_inquiry', confidence: result.matches[0]?.score ?? 0, language: 'bn',
+      entities: extractEntities(''), requiresHuman: false, action: 'request_product_clarification',
+      productIds: result.matches.map((match) => match.productId).slice(0, 5),
+      products: result.matches.slice(0, 5).map((match) => ({ id: match.productId, productName: match.product.productName, productCode: match.product.productCode, image: match.product.image, matchConfidence: match.score, matchReasons: match.reasons })),
+      source: 'rules',
+    };
+  }
+  return {
+    reply: 'ছবিটা দেখে প্রোডাক্টটি নিশ্চিতভাবে শনাক্ত করতে পারছি না। প্রোডাক্ট কোড বা নামটি দিলে আমি চেক করে দিচ্ছি।',
+    intent: 'unknown', confidence: 0, language: 'bn', entities: extractEntities(''), requiresHuman: false,
+    action: 'request_product_clarification', productIds: [], products: [], source: 'rules',
   };
 }
 
@@ -160,9 +181,9 @@ export class ChatService {
         customerId: customer.id,
         role: 'user',
         content: initialContent,
-        messageType: input.audio || input.audioTranscription ? 'audio' : input.image ? 'image' : 'text',
+        messageType: input.audio || input.audioTranscription ? 'audio' : input.image || input.imageRecognition ? 'image' : 'text',
         externalMessageId: input.externalMessageId,
-        ...(input.image || input.audio || input.audioTranscription || input.sourceMetadata
+        ...(input.image || input.imageRecognition || input.audio || input.audioTranscription || input.sourceMetadata
           ? {
               metadata: {
                 ...(input.sourceMetadata && typeof input.sourceMetadata === 'object' && !Array.isArray(input.sourceMetadata) ? input.sourceMetadata : {}),
@@ -193,12 +214,13 @@ export class ChatService {
         messageId: message.id,
       };
     }
-    const imageResult = input.image
+    const imageResult = input.imageRecognition ?? (input.image
       ? await this.imageProducts?.identify(input.image, initialContent)
-      : undefined;
-    if (input.image && !imageResult) throw new Error('Image processing is unavailable');
+      : undefined);
+    if ((input.image || input.imageRecognition) && !imageResult) throw new Error('Image processing is unavailable');
+    const imageRecommendationRequested = /(?:এইরকম|এরকম|similar|like this|more like)/iu.test(initialContent);
     const imageProductIds = imageResult?.selectedProduct
-      ? [imageResult.selectedProduct.productId]
+      ? [imageResult.selectedProduct.productId, ...(imageRecommendationRequested ? imageResult.matches.filter((match) => match.productId !== imageResult.selectedProduct?.productId).map((match) => match.productId) : [])]
       : imageResult?.confidenceLevel === 'medium'
         ? imageResult.matches.map((match) => match.productId)
         : [];
@@ -218,8 +240,19 @@ export class ChatService {
               confidence: imageResult.analysis?.confidence ?? 0,
               matchConfidence:
                 imageResult.selectedProduct?.score ?? imageResult.matches[0]?.score ?? 0,
-              matchedBy:
-                imageResult.selectedProduct?.reasons ?? imageResult.matches[0]?.reasons ?? [],
+              matchedBy: imageResult.selectedProduct?.reasons ?? imageResult.matches[0]?.reasons ?? [],
+              description: imageResult.analysis?.description ?? null,
+              ocr: imageResult.analysis?.ocr ?? null,
+              detectedProductCode: imageResult.analysis?.productCode ?? null,
+              visualAttributes: imageResult.analysis?.visualAttributes ?? [],
+              sizeChart: imageResult.analysis?.sizeChart ?? [],
+              candidates: imageResult.matches.map((match) => ({
+                productId: match.productId, productCode: match.product.productCode,
+                productName: match.product.productName, score: match.score, reasons: match.reasons,
+              })),
+              selectedProductId: imageResult.selectedProduct?.productId ?? null,
+              confidenceLevel: imageResult.confidenceLevel.toUpperCase(),
+              vision: imageResult.vision,
             },
           }
         : {}),
@@ -251,11 +284,12 @@ export class ChatService {
       customerId: customer.id,
       role: 'user',
       content: initialContent,
-      messageType: input.audio || input.audioTranscription ? 'audio' : input.image ? 'image' : 'text',
+      messageType: input.audio || input.audioTranscription ? 'audio' : input.image || input.imageRecognition ? 'image' : 'text',
       externalMessageId: input.externalMessageId,
-      ...(input.audio || input.audioTranscription || input.image || input.sourceMetadata ? { metadata: baseMetadata } : {}),
+      ...(input.audio || input.audioTranscription || input.image || input.imageRecognition || input.sourceMetadata ? { metadata: baseMetadata } : {}),
     });
     await this.followUps?.cancelPending(conversation.id, 'customer_replied');
+    await this.trackImageFeedback(conversation.id, initialContent).catch(() => undefined);
     const optOut = /(?:আর\s*(?:message|মেসেজ)\s*(?:দিয়েন|দিবেন)\s*না|follow-?up\s*(?:লাগবে না|বন্ধ)|stop\s*(?:messages?|follow-?ups?))/iu.test(initialContent);
     if (optOut) await (this.prisma as any).customer.update({ where: { id: customer.id }, data: { automationOptOut: true } });
     else if (/(?:follow-?up|মেসেজ).*(?:আবার|চালু|resume|start)/iu.test(initialContent)) await (this.prisma as any).customer.update({ where: { id: customer.id }, data: { automationOptOut: false } });
@@ -348,7 +382,14 @@ export class ChatService {
       const contextProductIds = [
         ...new Set([...imageProductIds, ...voiceProductIds, ...memory.activeProductIds]),
       ].slice(0, this.maxProductIds);
-      response = await this.orderConversation?.handle({
+      if (imageResult && imageResult.confidenceLevel !== 'high') {
+        const contextualMatches = [
+          ...imageResult.matches.filter((match) => memory.activeProductIds.includes(match.productId)),
+          ...imageResult.matches.filter((match) => !memory.activeProductIds.includes(match.productId)),
+        ];
+        response = imageClarificationResponse({ ...imageResult, matches: contextualMatches });
+      }
+      response = response ?? await this.orderConversation?.handle({
         message: customerMessage,
         conversationId: conversation.id,
         customer: {
@@ -375,6 +416,13 @@ export class ChatService {
           contextProductIds,
           conversationSummary: memory.conversation.summary,
           salesState: memory.conversation.salesState,
+          ...(imageResult?.analysis ? { imageContext: {
+            description: imageResult.analysis.description,
+            ocrText: imageResult.analysis.ocr.text,
+            visiblePrice: imageResult.analysis.priceVisible,
+            sizeChart: imageResult.analysis.sizeChart,
+            visualAttributes: imageResult.analysis.visualAttributes,
+          } } : {}),
           customerContext: { name: customer.name, language: customer.language, preferredSize: (customer as any).preferredSize, preferredCategory: (customer as any).preferredCategory, preferredColor: (customer as any).preferredColor },
         });
       }
@@ -534,6 +582,33 @@ export class ChatService {
       where: { id: conversationId },
       data: { salesState, conversationSummary: summary, summaryUpdatedAt: new Date() },
     });
+  }
+
+  private async trackImageFeedback(conversationId: string, message: string): Promise<void> {
+    const type = /^(?:yes|yeah|জি|জ্বি|হ্যাঁ|ঠিক|এটাই|এইটাই|correct)$/iu.test(message.trim())
+      ? 'CUSTOMER_CONFIRMED'
+      : /(?:না এটা না|ভুল product|wrong product|not this|মিলে নাই|মিলেনি)/iu.test(message)
+        ? 'CUSTOMER_REJECTED'
+        : null;
+    if (!type) return;
+    const db = this.prisma as any;
+    const image = await db.imageProcessing.findFirst({
+      where: { message: { is: { conversationId } }, selectedProductId: { not: null } }, orderBy: { createdAt: 'desc' },
+    });
+    if (!image) return;
+    const existing = await db.imageMatchFeedback.findFirst({ where: { messageId: image.messageId, type } });
+    if (existing) return;
+    if (type === 'CUSTOMER_REJECTED') {
+      const imageMessage = await db.message.findUnique({ where: { id: image.messageId } });
+      const metadata = imageMessage?.metadata && typeof imageMessage.metadata === 'object' && !Array.isArray(imageMessage.metadata) ? imageMessage.metadata : {};
+      await db.$transaction([
+        db.imageMatchFeedback.create({ data: { messageId: image.messageId, type, aiProductId: image.selectedProductId, actor: 'customer' } }),
+        db.imageProcessing.update({ where: { messageId: image.messageId }, data: { selectedProductId: null, confidenceLevel: 'CUSTOMER_REJECTED' } }),
+        db.message.update({ where: { id: image.messageId }, data: { metadata: { ...metadata, productIds: [] } } }),
+      ]);
+      return;
+    }
+    await db.imageMatchFeedback.create({ data: { messageId: image.messageId, type, aiProductId: image.selectedProductId, actor: 'customer' } });
   }
 
   private isFailureResponse(response: AIResponse): boolean {

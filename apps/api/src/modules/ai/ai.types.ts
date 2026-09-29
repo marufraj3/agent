@@ -38,6 +38,13 @@ export const aiInputSchema = z
     contextProductIds: z.array(z.number().int().positive()).max(10).default([]),
     conversationSummary: z.record(z.string(), z.unknown()).refine((value) => JSON.stringify(value).length <= 4_000, 'Conversation summary is too large').nullable().optional(),
     salesState: z.string().trim().max(50).nullable().optional(),
+    imageContext: z.object({
+      description: z.string().max(1_000).nullable(),
+      ocrText: z.string().max(5_000),
+      visiblePrice: z.string().max(50).nullable(),
+      sizeChart: z.array(z.object({ size: z.string().max(50), measurement: z.string().max(100) }).strict()).max(20),
+      visualAttributes: z.array(z.string().max(100)).max(20),
+    }).strict().optional(),
     customerContext: z
       .object({
         name: z.string().trim().max(255).nullable().optional(),

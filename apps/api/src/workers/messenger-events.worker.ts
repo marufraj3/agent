@@ -15,6 +15,8 @@ import type { MessengerJobData } from '../modules/channels/messenger/messenger.t
 import { createFollowUpQueue } from '../modules/automation/follow-up.queue.js';
 import { createAudioTranscriptionQueue } from '../modules/audio/audio-transcription.queue.js';
 import { AudioIngestionService } from '../modules/audio/audio-ingestion.service.js';
+import { createImageAnalysisQueue } from '../modules/images/image-analysis.queue.js';
+import { ImageIngestionService } from '../modules/images/image-ingestion.service.js';
 
 const logger = pino({
   level: env.LOG_LEVEL,
@@ -27,6 +29,7 @@ const connection = createRedisConnection();
 const controlQueue = createMessengerEventQueue();
 const followUpQueue = createFollowUpQueue();
 const audioQueue = createAudioTranscriptionQueue();
+const imageQueue = createImageAnalysisQueue();
 await Promise.all([prisma.$connect(), controlQueue.setGlobalConcurrency(1)]);
 const stopHeartbeat = startWorkerHeartbeat(connection, MESSENGER_QUEUE_NAME);
 const service = new MessengerService(
@@ -35,6 +38,7 @@ const service = new MessengerService(
   new MessengerSender(getMessengerConfig()),
   connection,
   new AudioIngestionService(prisma, audioQueue, connection, env.AUDIO_RATE_LIMIT_PER_MINUTE),
+  new ImageIngestionService(prisma, imageQueue),
 );
 
 const worker = new Worker<MessengerJobData>(
@@ -61,7 +65,7 @@ async function shutdown(signal: string) {
   logger.info({ signal }, 'Stopping Messenger worker');
   await worker.close();
   await stopHeartbeat();
-  await Promise.allSettled([controlQueue.close(), followUpQueue.close(), audioQueue.close(), connection.quit(), prisma.$disconnect()]);
+  await Promise.allSettled([controlQueue.close(), followUpQueue.close(), audioQueue.close(), imageQueue.close(), connection.quit(), prisma.$disconnect()]);
   process.exit(0);
 }
 process.once('SIGINT', () => void shutdown('SIGINT'));

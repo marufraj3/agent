@@ -42,7 +42,7 @@ export function normalizeImageMimeType(value: string | null | undefined): string
 export class ImageValidationService {
   readonly maxBytes: number;
 
-  constructor(maxSizeMb: number) {
+  constructor(maxSizeMb: number, readonly maxDimension = 12_000) {
     this.maxBytes = Math.floor(maxSizeMb * 1024 * 1024);
   }
 
@@ -96,7 +96,15 @@ export class ImageValidationService {
     if (declared && declared !== detected) {
       throw new ImageValidationError('Declared MIME type does not match image content', 'INVALID_IMAGE');
     }
+    const dimensions = this.detectDimensions(data, detected);
+    if (dimensions && (dimensions.width > this.maxDimension || dimensions.height > this.maxDimension)) {
+      throw new ImageValidationError('Image dimensions exceed the configured limit', 'INVALID_IMAGE');
+    }
     return detected;
+  }
+
+  dimensions(data: Buffer, mimeType: SupportedImageMimeType): { width: number; height: number } | null {
+    return this.detectDimensions(data, mimeType);
   }
 
   private detectMimeType(data: Buffer): SupportedImageMimeType | null {
@@ -115,6 +123,31 @@ export class ImageValidationService {
       data.subarray(8, 12).toString('ascii') === 'WEBP'
     ) {
       return 'image/webp';
+    }
+    return null;
+  }
+
+  private detectDimensions(data: Buffer, mimeType: SupportedImageMimeType): { width: number; height: number } | null {
+    if (mimeType === 'image/png' && data.length >= 24) {
+      const width = data.readUInt32BE(16); const height = data.readUInt32BE(20);
+      return width > 0 && height > 0 ? { width, height } : null;
+    }
+    if (mimeType === 'image/webp' && data.length >= 30 && data.subarray(12, 16).toString('ascii') === 'VP8X') {
+      const width = 1 + data.readUIntLE(24, 3); const height = 1 + data.readUIntLE(27, 3);
+      return { width, height };
+    }
+    if (mimeType === 'image/jpeg') {
+      let offset = 2;
+      while (offset + 9 < data.length) {
+        if (data[offset] !== 0xff) { offset += 1; continue; }
+        const marker = data[offset + 1]!; const length = data.readUInt16BE(offset + 2);
+        if (length < 2 || offset + 2 + length > data.length) break;
+        if ([0xc0, 0xc1, 0xc2, 0xc3, 0xc5, 0xc6, 0xc7, 0xc9, 0xca, 0xcb, 0xcd, 0xce, 0xcf].includes(marker)) {
+          const height = data.readUInt16BE(offset + 5); const width = data.readUInt16BE(offset + 7);
+          return width > 0 && height > 0 ? { width, height } : null;
+        }
+        offset += 2 + length;
+      }
     }
     return null;
   }

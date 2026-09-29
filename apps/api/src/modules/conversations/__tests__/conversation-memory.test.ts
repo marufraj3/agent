@@ -371,7 +371,7 @@ test('an identified image product is persisted and reused by the next conversati
   const ai = new CapturingAI();
   const imageProducts = {
     identify: async () => ({
-      image: { mimeType: 'image/webp', sizeBytes: 1_024, source: 'test', temporary: true },
+      image: { mimeType: 'image/webp', sizeBytes: 1_024, width: 800, height: 800, fingerprint: 'image-hash', source: 'test', temporary: true },
       analysis: {
         productName: 'TX170 Messi Fan Edition Polo',
         productCode: 'TX170',
@@ -382,7 +382,9 @@ test('an identified image product is persisted and reused by the next conversati
         visibleText: ['TX170'],
         designKeywords: ['Messi'],
         sizeVisible: null,
-        priceVisible: '1250',
+        priceVisible: '1250', description: 'Messi polo screenshot', productNameHints: ['Messi polo'],
+        categoryHints: ['Polo'], colorHints: ['Blue'], visualAttributes: ['Argentina design'],
+        ocr: { text: 'TX170 ৳1250', confidence: null }, detectedProducts: [], sizeChart: [],
         confidence: 0.96,
       },
       analysisStatus: 'completed',
@@ -396,6 +398,7 @@ test('an identified image product is persisted and reused by the next conversati
           availability: { id: 6238, sizes: [] },
         },
       ],
+      detectedProducts: [], vision: { provider: 'gemini', model: 'test', durationMs: 10 },
       selectedProduct: {
         productId: 6238,
         score: 0.96,

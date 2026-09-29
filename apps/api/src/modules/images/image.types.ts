@@ -24,6 +24,8 @@ export interface PreparedImage {
   base64: string;
   mimeType: SupportedImageMimeType;
   sizeBytes: number;
+  width: number | null;
+  height: number | null;
   sha256: string;
   source: string;
   temporary: true;
@@ -41,6 +43,27 @@ export const imageAnalysisSchema = z
     designKeywords: z.array(z.string().trim().min(1).max(100)).max(20),
     sizeVisible: z.string().trim().min(1).max(50).nullable(),
     priceVisible: z.string().trim().min(1).max(50).nullable(),
+    description: z.string().trim().min(1).max(1_000).nullable(),
+    productNameHints: z.array(z.string().trim().min(1).max(255)).max(10),
+    categoryHints: z.array(z.string().trim().min(1).max(100)).max(10),
+    colorHints: z.array(z.string().trim().min(1).max(100)).max(10),
+    visualAttributes: z.array(z.string().trim().min(1).max(100)).max(20),
+    ocr: z.object({
+      text: z.string().max(5_000),
+      confidence: z.number().min(0).max(1).nullable(),
+    }).strict(),
+    detectedProducts: z.array(z.object({
+      index: z.number().int().positive(),
+      productName: z.string().trim().min(1).max(255).nullable(),
+      productCode: z.string().trim().min(1).max(100).nullable(),
+      category: z.string().trim().min(1).max(100).nullable(),
+      color: z.string().trim().min(1).max(100).nullable(),
+      attributes: z.array(z.string().trim().min(1).max(100)).max(10),
+    }).strict()).max(10),
+    sizeChart: z.array(z.object({
+      size: z.string().trim().min(1).max(50),
+      measurement: z.string().trim().min(1).max(100),
+    }).strict()).max(20),
     confidence: z.number().min(0).max(1),
   })
   .strict();

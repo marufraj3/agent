@@ -29,6 +29,11 @@ export interface ProductMatchResult {
   selectedProduct: ProductMatch | null;
 }
 
+/** Future vector/embedding matchers can implement this without changing orchestration. */
+export interface ImageProductMatcher {
+  match(clues: ProductClues, clueConfidence?: number): Promise<ProductMatchResult>;
+}
+
 function normalize(value: string): string {
   return value
     .toLowerCase()
@@ -78,8 +83,11 @@ export function mergeProductClues(
     category: analysis.category,
     subCategory: analysis.subCategory,
     color: analysis.color,
-    visibleText: [...(captionClues.visibleText ?? []), ...analysis.visibleText],
-    designKeywords: analysis.designKeywords,
+    designKeywords: [...analysis.designKeywords, ...analysis.visualAttributes],
+    visibleText: [
+      ...(captionClues.visibleText ?? []), ...analysis.visibleText,
+      analysis.ocr.text, analysis.description ?? '', ...analysis.productNameHints, ...analysis.categoryHints, ...analysis.colorHints,
+    ].filter(Boolean),
   };
 }
 
@@ -88,6 +96,7 @@ export class ProductMatchingService {
     private readonly catalog: ProductCatalogService,
     private readonly highThreshold: number,
     private readonly mediumThreshold: number,
+    private readonly candidateLimit = 5,
   ) {}
 
   async match(clues: ProductClues, clueConfidence = 1): Promise<ProductMatchResult> {
@@ -210,7 +219,7 @@ export class ProductMatchingService {
 
     return {
       confidenceLevel,
-      matches: matches.filter((match) => match.score >= this.mediumThreshold).slice(0, 5),
+      matches: matches.filter((match) => match.score >= this.mediumThreshold).slice(0, this.candidateLimit),
       selectedProduct,
     };
   }

@@ -32,7 +32,7 @@ type Summary = {
   handovers: Array<{ reason: string; status: string }>;
 };
 type Metadata = {
-  image?: { url?: string | null; mimeType?: string };
+  image?: { url?: string | null; mimeType?: string; status?: string; width?: number | null; height?: number | null };
   audio?: { url?: string | null; mimeType?: string; duration?: number | null };
   transcription?: {
     text?: string;
@@ -66,6 +66,14 @@ type Detail = Omit<Summary, "customer" | "messages" | "handovers"> & {
       language: string | null; confidence: number | null; durationSeconds: number | null;
       provider: string | null; model: string | null; retainedUntil: string | null;
     } | null;
+    imageProcessing?: {
+      status: string; width: number | null; height: number | null; analysisStatus: string | null;
+      analysisResult?: { description?: string | null; ocr?: { text?: string; confidence?: number | null }; productCode?: string | null; visualAttributes?: string[] } | null;
+      candidates?: Array<{ productId: number; productCode: string; productName: string; score: number; reasons: string[] }> | null;
+      confidenceLevel: string | null; selectedProductId: number | null; provider: string | null; model: string | null;
+      visionDurationMs: number | null; matchingDurationMs: number | null; aiDurationMs: number | null; totalDurationMs: number | null; retainedUntil: string | null;
+    } | null;
+    imageFeedback?: Array<{ id: string; type: string; aiProductId: number | null; correctedProductId: number | null }>;
   }>;
   handovers: Array<{
     id: string;
@@ -231,6 +239,29 @@ export default function InboxPage() {
     } finally {
       setLoading(false);
     }
+  }
+
+  async function reanalyzeImage(messageId: string) {
+    if (!password || !selectedId) return;
+    setLoading(true); setError("");
+    try {
+      await adminRequest(`/admin/messages/${messageId}/reanalyze-image`, password, { method: "POST", body: "{}" });
+      await openConversation(selectedId);
+    } catch (caught) { setError(caught instanceof Error ? caught.message : "Image re-analysis failed."); }
+    finally { setLoading(false); }
+  }
+
+  async function correctImageMatch(messageId: string, currentProductId?: number | null) {
+    if (!password || !selectedId) return;
+    const value = window.prompt("Correct website product ID:", currentProductId ? String(currentProductId) : "");
+    if (!value) return; const productId = Number(value);
+    if (!Number.isInteger(productId) || productId <= 0) { setError("Enter a valid product ID."); return; }
+    setLoading(true); setError("");
+    try {
+      await adminRequest(`/admin/messages/${messageId}/image-match-correction`, password, { method: "POST", body: JSON.stringify({ productId }) });
+      await openConversation(selectedId);
+    } catch (caught) { setError(caught instanceof Error ? caught.message : "Image correction failed."); }
+    finally { setLoading(false); }
   }
 
   async function send(event: FormEvent) {
@@ -550,6 +581,21 @@ export default function InboxPage() {
                             </button>
                           ) : null}
                         </div>
+                      ) : null}
+                      {message.messageType === "IMAGE" && message.imageProcessing ? (
+                        <details className="mt-2 rounded-lg border border-current/20 p-2 text-[10px]" open>
+                          <summary className="cursor-pointer font-semibold">Image debug · {message.imageProcessing.status}</summary>
+                          <p className="mt-1">{message.imageProcessing.width ?? "?"}×{message.imageProcessing.height ?? "?"} · {message.imageProcessing.provider ?? "provider unknown"}/{message.imageProcessing.model ?? "model unknown"} · {message.imageProcessing.confidenceLevel ?? "confidence unknown"}</p>
+                          {message.imageProcessing.analysisResult?.description ? <p className="mt-1">{message.imageProcessing.analysisResult.description}</p> : null}
+                          {message.imageProcessing.analysisResult?.ocr?.text ? <p className="mt-1 whitespace-pre-wrap">OCR: {message.imageProcessing.analysisResult.ocr.text} · {typeof message.imageProcessing.analysisResult.ocr.confidence === "number" ? `${Math.round(message.imageProcessing.analysisResult.ocr.confidence * 100)}%` : "confidence unavailable"}</p> : null}
+                          {message.imageProcessing.candidates?.length ? <div className="mt-1 space-y-1">{message.imageProcessing.candidates.map((candidate) => <button key={candidate.productId} type="button" onClick={() => void correctImageMatch(message.id, candidate.productId)} className="mr-1 rounded border border-current px-1.5 py-0.5">{candidate.productCode} ({Math.round(candidate.score * 100)}%)</button>)}</div> : null}
+                          <p>Selected: {message.imageProcessing.selectedProductId ?? "none"} · Vision {message.imageProcessing.visionDurationMs ?? "—"}ms · Match {message.imageProcessing.matchingDurationMs ?? "—"}ms · AI {message.imageProcessing.aiDurationMs ?? "—"}ms · Total {message.imageProcessing.totalDurationMs ?? "—"}ms</p>
+                          <div className="mt-2 flex flex-wrap gap-2">
+                            <button type="button" onClick={() => void correctImageMatch(message.id, message.imageProcessing?.selectedProductId)} className="rounded-md border border-current px-2 py-1 font-semibold">Correct Product</button>
+                            {message.metadata?.image?.url ? <button type="button" onClick={() => void reanalyzeImage(message.id)} className="rounded-md border border-current px-2 py-1 font-semibold">Re-analyze retained image</button> : null}
+                          </div>
+                          {message.imageFeedback?.length ? <p className="mt-1">Feedback: {message.imageFeedback.map((feedback) => feedback.type).join(", ")}</p> : null}
+                        </details>
                       ) : null}
                       {message.metadata?.audioDebug ? (
                         <details className="mt-2 rounded-lg border border-current/20 p-2 text-[10px]">

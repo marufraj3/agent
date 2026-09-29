@@ -8,6 +8,7 @@ import { enqueueMessengerEvent } from '../messenger.queue.js';
 import { verifyMessengerSignature } from '../messenger.signature.js';
 import type { NormalizedMessengerEvent } from '../messenger.types.js';
 import { AudioIngestionService, AudioRateLimitError } from '../../../audio/audio-ingestion.service.js';
+import { ImageIngestionService } from '../../../images/image-ingestion.service.js';
 
 const requests = new Map<string, { minute: number; count: number }>();
 function enforceWebhookRate(request: FastifyRequest) {
@@ -25,6 +26,7 @@ async function registerEvent(
   event: NormalizedMessengerEvent,
   requestId?: string,
   audioIngestion?: AudioIngestionService,
+  imageIngestion?: ImageIngestionService,
 ) {
   const db = app.prisma as any;
   let log = await db.messengerEventLog.findUnique({ where: { externalEventId: event.externalEventId } });
@@ -56,6 +58,8 @@ async function registerEvent(
         // Customer-safe rate-limit replies are delivered by the normal Messenger worker.
         await enqueueMessengerEvent(app.messengerEventQueue, { eventLogId: log.id, event, requestId });
       }
+    } else if (event.messageType === 'image' && imageIngestion) {
+      await imageIngestion.ingest(event, log.id, requestId);
     } else {
       await enqueueMessengerEvent(app.messengerEventQueue, { eventLogId: log.id, event, requestId });
     }
@@ -75,6 +79,9 @@ export async function messengerRoutes(app: FastifyInstance): Promise<void> {
   const parser = new MessengerEventParser();
   const audioIngestion = app.audioTranscriptionQueue
     ? new AudioIngestionService(app.prisma, app.audioTranscriptionQueue, app.redis, env.AUDIO_RATE_LIMIT_PER_MINUTE)
+    : undefined;
+  const imageIngestion = app.imageAnalysisQueue
+    ? new ImageIngestionService(app.prisma, app.imageAnalysisQueue)
     : undefined;
 
   app.removeContentTypeParser('application/json');
@@ -104,7 +111,7 @@ export async function messengerRoutes(app: FastifyInstance): Promise<void> {
     if (!payload || payload.object !== 'page') throw new AppError('Unsupported Facebook webhook object', 404, 'UNSUPPORTED_WEBHOOK');
     const events = parser.parse(payload, config.pageId);
     try {
-      await Promise.all(events.map((event) => registerEvent(app, event, request.id, audioIngestion)));
+      await Promise.all(events.map((event) => registerEvent(app, event, request.id, audioIngestion, imageIngestion)));
     } catch {
       return reply.code(503).send({ success: false, error: { code: 'MESSENGER_QUEUE_UNAVAILABLE', message: 'Event will be retried', requestId: request.id } });
     }

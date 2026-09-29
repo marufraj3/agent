@@ -27,10 +27,6 @@ export class MessengerEventParser {
         if (!messageId || messageId.length > 255) continue;
         const timestamp = typeof messaging.timestamp === 'number' ? messaging.timestamp : Date.now();
         const text = typeof message.text === 'string' ? message.text.trim().slice(0, 4_000) : '';
-        if (text) {
-          events.push({ externalEventId: messageId, messageId, senderId, pageId, timestamp, messageType: 'text', text });
-          continue;
-        }
         const attachments = Array.isArray(message.attachments) ? message.attachments : [];
         const attachment = record(attachments[0]);
         const attachmentPayload = record(attachment?.payload);
@@ -47,7 +43,9 @@ export class MessengerEventParser {
           ? 'image'
           : attachmentType === 'audio' && url
             ? 'audio'
-            : 'unsupported';
+            : text
+              ? 'text'
+              : 'unsupported';
         events.push({
           externalEventId: messageId,
           messageId,
@@ -55,7 +53,7 @@ export class MessengerEventParser {
           pageId,
           timestamp,
           messageType,
-          text: messageType === 'unsupported' ? '[Unsupported Messenger attachment]' : '',
+          text: messageType === 'unsupported' ? '[Unsupported Messenger attachment]' : text,
           attachmentUrl: url,
           attachmentType,
           ...(mimeType ? { mimeType } : {}),
