@@ -1,8 +1,8 @@
 # Alzeena Fashion Sales Agent
 
-Production-oriented foundation for the future Alzeena Fashion AI sales agent. The repository currently contains **Steps 1–2**: the web application, API, infrastructure configuration, and the initial PostgreSQL/Prisma data layer.
+Production-oriented foundation for the future Alzeena Fashion AI sales agent. The repository currently contains **Steps 1–3**: the web application, API, infrastructure configuration, PostgreSQL/Prisma data layer, and local product-feed synchronization.
 
-Step 2 adds database models, an initial migration, an idempotent test seed, and a verification script. It does not add product synchronization, sales APIs, AI, messaging, orders, conversations, handover, or administration features.
+Step 3 adds the Product Feed adapter, transactional upserts, a BullMQ worker, manual sync/status endpoints, and local search/availability services. It does not add AI, messaging, orders, conversations, handover, or a full administration dashboard.
 
 ## Architecture
 
@@ -24,7 +24,7 @@ Step 2 adds database models, an initial migration, an idempotent test seed, and 
 └── tsconfig.base.json          # Shared TypeScript rules
 ```
 
-Future modules (AI/Gemini, Facebook Messenger, product sync, orders, image/voice processing, conversations, human handover, and Knowledge Base UI) should be introduced as isolated API modules and/or workers. `createQueue` in `apps/api/src/infrastructure/queue.ts` is the generic BullMQ extension point. No feature queue or worker is created yet.
+Future modules (AI/Gemini, Facebook Messenger, orders, image/voice processing, conversations, human handover, and Knowledge Base UI) should be introduced as isolated API modules and/or workers. Product synchronization is the first isolated module and runs through its own `product-sync` BullMQ worker.
 
 ## Step 2 database models
 
@@ -36,6 +36,62 @@ Future modules (AI/Gemini, Facebook Messenger, product sync, orders, image/voice
 - `SystemLog` provides structured levels, event types, JSONB metadata, and timestamp indexes.
 
 Prices use PostgreSQL `DECIMAL(12,2)`, not floating point. Sensitive values remain environment variables and must not be stored in `Setting` or `SystemLog`.
+
+## Step 3 product synchronization
+
+```text
+Manual API request → product-sync queue → Redis → standalone worker
+                                              ↓
+Alzeena Product Feed → validated adapter → per-product transaction → PostgreSQL
+                                                               ↓
+                                             local search and availability services
+```
+
+The observed live feed is a single JSON array. The adapter also supports Laravel-style `data`, `links`, `meta`, `current_page`, `last_page`, and `next_page_url` pagination if the upstream format changes. It rejects cross-origin pagination URLs, enforces a page limit and request timeout, and retries only network failures, timeouts, HTTP 408/429, and HTTP 5xx responses.
+
+Products and variations are upserted by their unique website IDs. Missing variations are retained but marked inactive with zero stock. Products absent from a complete, error-free feed are retained and marked `presentInFeed = false`; the source `productStatus` is preserved separately. Unknown product status values fail closed for availability.
+
+### Start API and worker
+
+Use separate terminals after PostgreSQL, Redis, migrations, and Prisma Client are ready:
+
+```bash
+npm run dev:api
+npm run dev:worker
+```
+
+Set a strong `ADMIN_PASSWORD` of at least 12 characters in `.env`. Queue a synchronization job:
+
+```bash
+curl -X POST http://localhost:4000/api/admin/product-sync \
+  -H "x-admin-password: $ADMIN_PASSWORD"
+```
+
+Inspect persisted synchronization status:
+
+```bash
+curl http://localhost:4000/api/admin/product-sync/status \
+  -H "x-admin-password: $ADMIN_PASSWORD"
+```
+
+Search the local database—the endpoint never calls the external feed:
+
+```bash
+curl "http://localhost:4000/api/products/search?q=TX170"
+curl "http://localhost:4000/api/products/search?q=Argentina"
+```
+
+Inspect stock and pre-order availability:
+
+```bash
+curl http://localhost:4000/api/products/6238/availability
+```
+
+Run parser/business-rule unit tests with `npm test`. With local infrastructure running, execute two live, idempotency-checking syncs and verify product 6238, variations, search, and availability with:
+
+```bash
+npm run verify:product-sync
+```
 
 ## Prerequisites
 
@@ -74,7 +130,7 @@ Without Docker, create a PostgreSQL database and user matching `DATABASE_URL`, s
 
 ## Initialize and verify the database
 
-Generate Prisma Client and apply the committed `20260929120000_initial_business_schema` migration:
+Generate Prisma Client and apply all committed migrations, including `initial_business_schema` and `product_feed_sync_state`:
 
 ```bash
 npm run prisma:generate
@@ -170,11 +226,14 @@ Run the compiled backend with `npm run start --workspace=@alzeena/api`. Run the 
 | `NEXT_PUBLIC_API_BASE_URL` | Browser-visible API URL | Reserved |
 | `DATABASE_URL` | PostgreSQL connection string | Used |
 | `REDIS_URL` | Redis connection string | Used |
-| `ADMIN_PASSWORD` | Future admin authentication | Reserved |
+| `ADMIN_PASSWORD` | Header credential for protected manual sync operations | Used |
 | `GEMINI_API_KEY` | Future Gemini integration | Reserved |
 | `META_PAGE_ACCESS_TOKEN` | Future Meta integration | Reserved |
 | `META_APP_SECRET` | Future Meta integration | Reserved |
 | `META_VERIFY_TOKEN` | Future webhook verification | Reserved |
-| `WEBSITE_API_BASE_URL` | Future existing-site integration | Reserved |
+| `WEBSITE_API_BASE_URL` | Alzeena website API base URL | Used by worker |
+| `PRODUCT_FEED_TIMEOUT_MS` | Per-request feed timeout | Used by worker |
+| `PRODUCT_FEED_RETRIES` | Temporary-failure retry count | Used by worker |
+| `PRODUCT_FEED_MAX_PAGES` | Pagination safety limit | Used by worker |
 
-Only variables needed by Step 1 are validated at API startup. Reserved secrets remain unused and must not be populated until their corresponding feature is implemented.
+Only variables needed by implemented steps are validated at process startup. Reserved secrets remain unused and must not be populated until their corresponding feature is implemented.

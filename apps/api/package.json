@@ -6,8 +6,12 @@
   "main": "dist/server.js",
   "scripts": {
     "dev": "tsx watch src/server.ts",
+    "dev:worker": "tsx watch src/workers/product-sync.worker.ts",
     "build": "tsc -p tsconfig.json",
     "start": "node dist/server.js",
+    "start:worker": "node dist/workers/product-sync.worker.js",
+    "test": "node --import tsx --test src/modules/products/__tests__/*.test.ts",
+    "verify:product-sync": "tsx src/scripts/verify-product-sync.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
@@ -17,6 +21,7 @@
     "dotenv": "^17.2.3",
     "fastify": "^5.6.1",
     "ioredis": "^5.8.2",
+    "pino": "^9.14.0",
     "zod": "^4.1.12"
   },
   "devDependencies": {

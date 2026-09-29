@@ -24,6 +24,14 @@ const envSchema = z.object({
   REDIS_URL: z.url().refine((url) => url.startsWith('redis://') || url.startsWith('rediss://'), {
     message: 'REDIS_URL must use redis:// or rediss://',
   }),
+  ADMIN_PASSWORD: z.preprocess(
+    (value) => (value === '' ? undefined : value),
+    z.string().min(12, 'ADMIN_PASSWORD must contain at least 12 characters').optional(),
+  ),
+  WEBSITE_API_BASE_URL: z.url().default('https://sells.alzeena.com.bd/public/api'),
+  PRODUCT_FEED_TIMEOUT_MS: z.coerce.number().int().min(1_000).max(120_000).default(30_000),
+  PRODUCT_FEED_RETRIES: z.coerce.number().int().min(0).max(5).default(3),
+  PRODUCT_FEED_MAX_PAGES: z.coerce.number().int().min(1).max(10_000).default(1_000),
 });
 
 const result = envSchema.safeParse(process.env);
