@@ -3,6 +3,7 @@ import { UnrecoverableError, Worker } from 'bullmq';
 import pino from 'pino';
 import { env } from '../config/env.js';
 import { createRedisConnection } from '../infrastructure/redis.js';
+import { startWorkerHeartbeat } from '../infrastructure/worker-heartbeat.js';
 import { ProductFeedResponseError } from '../modules/products/product-feed.client.js';
 import { createProductFeedClient } from '../modules/products/product-feed.factory.js';
 import {
@@ -20,6 +21,7 @@ const logger = pino({
 const connection = createRedisConnection();
 const controlQueue = createProductSyncQueue();
 await controlQueue.setGlobalConcurrency(1);
+const stopHeartbeat = startWorkerHeartbeat(connection, PRODUCT_SYNC_QUEUE_NAME);
 
 const worker = new Worker<ProductSyncJobData, ProductSyncResult>(
   PRODUCT_SYNC_QUEUE_NAME,
@@ -66,9 +68,13 @@ worker.on('error', (error) => {
   logger.error({ err: error }, 'Product sync worker error');
 });
 
+let shuttingDown = false;
 async function shutdown(signal: string): Promise<void> {
+  if (shuttingDown) return;
+  shuttingDown = true;
   logger.info({ signal }, 'Stopping product sync worker');
   await worker.close();
+  await stopHeartbeat();
   await Promise.allSettled([controlQueue.close(), connection.quit(), prisma.$disconnect()]);
   process.exit(0);
 }

@@ -1,6 +1,6 @@
 # Alzeena Fashion Sales Agent
 
-Production-oriented foundation for the Alzeena Fashion AI sales agent. The repository currently contains **Steps 1–11**: the web application, API, infrastructure configuration, PostgreSQL/Prisma data layer, product synchronization, protected business administration, the modular Gemini-backed AI core, persistent multimodal conversation memory, the deterministic Order Engine, human-handover Admin Inbox, and a queued Facebook Messenger channel adapter.
+Production-oriented foundation for the Alzeena Fashion AI sales agent. The repository currently contains **Steps 1–12**: the web application, API, infrastructure configuration, PostgreSQL/Prisma data layer, product synchronization, protected business administration, the modular Gemini-backed AI core, persistent multimodal conversation memory, the deterministic Order Engine, human-handover Admin Inbox, and a queued Facebook Messenger channel adapter.
 
 Step 11 adds signed Meta webhooks, event normalization and deduplication, a BullMQ Messenger worker, text/image/voice routing through the existing conversation system, safe outbound delivery, and real Messenger delivery for admin replies. It does not add WhatsApp, Instagram DM, voice replies, campaigns, broadcasts, comment automation, or analytics.
 
@@ -579,12 +579,65 @@ Run the compiled backend with `npm run start --workspace=@alzeena/api`. Run the 
 | `MAX_AUDIO_DURATION_SECONDS` | Maximum accepted/detected audio duration | Used |
 | `AUDIO_REQUEST_TIMEOUT_MS` | Audio download and transcription timeout | Used |
 | `VOICE_TRANSCRIPTION_LOW_CONFIDENCE` | Clarification threshold for uncertain transcription | Used |
-| `META_PAGE_ACCESS_TOKEN` | Future Meta integration | Reserved |
-| `META_APP_SECRET` | Future Meta integration | Reserved |
-| `META_VERIFY_TOKEN` | Future webhook verification | Reserved |
+| `FACEBOOK_PAGE_ACCESS_TOKEN` | Server-only Page token for Messenger Send API | Used |
+| `FACEBOOK_APP_SECRET`, `FACEBOOK_VERIFY_TOKEN` | Webhook signature and verification secrets | Used |
+| `FACEBOOK_APP_ID`, `FACEBOOK_PAGE_ID` | Meta application/Page identifiers | Used |
+| `FACEBOOK_GRAPH_API_VERSION`, `FACEBOOK_SEND_TIMEOUT_MS` | Graph version and outbound timeout | Used |
+| `MESSENGER_WEBHOOK_RATE_LIMIT_PER_MINUTE` | Signed webhook IP safety limit | Used |
 | `WEBSITE_API_BASE_URL` | Alzeena website API base URL | Used by worker |
 | `PRODUCT_FEED_TIMEOUT_MS` | Per-request feed timeout | Used by worker |
 | `PRODUCT_FEED_RETRIES` | Temporary-failure retry count | Used by worker |
 | `PRODUCT_FEED_MAX_PAGES` | Pagination safety limit | Used by worker |
 
 Only variables needed by implemented steps are validated at process startup. Reserved secrets remain unused and must not be populated until their corresponding feature is implemented.
+
+## Step 12 production reliability and operations
+
+Step 12 adds central safe errors and request IDs, structured/redacted logs, bounded dependency calls, circuit breakers, shared BullMQ policy/monitoring, worker heartbeats, queue recovery controls, API rate limiting, richer health checks, operational analytics, and the System admin pages. It deliberately does not add any Step 13 channel or campaign features.
+
+### Correlation, errors, and logs
+
+- Clients may send `x-request-id` using 8–128 safe alphanumeric/`._:-` characters. Invalid values are replaced with a UUID; every response repeats the ID.
+- Errors use `{ "success": false, "error": { "code", "message", "requestId" } }`. Unexpected production errors never expose stacks or upstream details.
+- Pino emits JSON outside development. Authorization/cookies, admin credentials, API keys/tokens, database/Redis URLs, phone, and address fields are redacted. Search by `requestId`, queue `jobId`, conversation, or event type.
+- `SystemLog` keeps its compatible `type` field and adds indexed `event`, `module`, `requestId`, `conversationId`, and `customerId` dimensions. Apply migration `20260929190000_production_reliability` before deployment.
+
+### Queues, retries, and recovery
+
+Queues are `product-sync`, `messenger-events`, `ai-processing`, `order-processing`, and `notifications`. Default jobs use three attempts, exponential backoff starting at two seconds, and bounded completed/failed retention. Product validation/feed-shape failures and permanent Messenger errors use BullMQ `UnrecoverableError`; temporary network/rate-limit/server failures retry. Messenger processing remains globally ordered and has a 60-second distributed conversation lock. Durable database event IDs prevent webhook duplicates; persisted outbound IDs prevent duplicate AI generation on delivery retry. Order submission retains its database compare-and-set lock, unique submission reference/external ID, and never automatically retries an unknown external outcome.
+
+Run workers separately from the API:
+
+```bash
+npm run start:worker --workspace=@alzeena/api
+npm run start:messenger-worker --workspace=@alzeena/api
+```
+
+BullMQ persists waiting/delayed/failed work in Redis and recovers stalled work after restart. Stop with SIGTERM and allow the API/workers to drain. The workers publish expiring Redis heartbeats. Visit `/admin/system/jobs` to inspect counts and retained failures; failed jobs can be explicitly retried or removed. Never retry an order whose external outcome is unknown without reconciliation.
+
+### Health and dashboards
+
+- `GET /health` is public, bounded to two seconds per dependency, and returns only API/PostgreSQL/Redis state and uptime. Use it for liveness/readiness.
+- `GET /api/admin/system/health` requires `x-admin-password` and includes queue counts, worker heartbeats, product sync freshness, circuit state, memory, and uptime.
+- `GET /api/admin/system/analytics` returns basic Today/7/30-day customer, conversation, order, and error counts.
+- `/admin/system` is the protected operations dashboard; `/admin/system/jobs` is queue failure management.
+
+A missing heartbeat means that worker is stopped or cannot reach Redis. A stale product sync means the local catalogue may no longer reflect the Product API; keep the local database as the runtime product source and restore sync rather than querying upstream per chat.
+
+### Limits and dependency protection
+
+All non-webhook API routes have a Redis-backed 300 requests/minute/IP safety limit and return the standard HTTP 429 error. The signed Messenger webhook retains its separate configurable limiter and quick queue-only acknowledgement. AI test traffic has its tighter `AI_TEST_RATE_LIMIT_PER_MINUTE` limit. Conversation history, model products/output tokens, Gemini timeout, image/audio bytes and duration, request bodies, redirects, and public URL destinations are bounded. Media downloads reject private/reserved hosts (including after redirects), validate signatures/MIME, stream with a hard byte ceiling, and remain in memory only.
+
+Gemini retries one temporary failure before safe fallback and has a circuit breaker. Product API uses bounded exponential retries plus a circuit breaker. Facebook and Order API calls are timeout-bound and circuit protected. Order calls are intentionally not blindly retried because a timeout can have an unknown creation outcome. Deterministic local product/order calculations remain authoritative; AI never calculates price, stock, delivery, or order validity.
+
+### Production deployment checklist
+
+1. Provision backed-up PostgreSQL and persistent Redis; restrict both to the private network and enable TLS where supported.
+2. Set `NODE_ENV=production`, HTTPS `FRONTEND_URL`, strong `ADMIN_PASSWORD`, `DATABASE_URL`, and `REDIS_URL`. Add Gemini/Facebook credentials only server-side. Startup validates complete Facebook credential sets without printing values.
+3. Apply Prisma migrations, then build once: `npm run prisma:generate && npm run db:migrate:deploy && npm run typecheck && npm run build`.
+4. Start one API process and the product/Messenger workers under a supervisor with SIGTERM grace. Scale only after reviewing queue global concurrency and conversation ordering.
+5. Verify `/health`, `/admin/system`, worker heartbeats, queue counts, product-sync freshness, and a signed test webhook. Confirm secrets do not appear in browser bundles or logs.
+6. Configure HTTPS, proxy body/time limits, firewall rules, log retention/alerts, database point-in-time backups, and Redis persistence. Alert on degraded health, missing heartbeat, open circuit, failed queue growth, stale product sync, and order `UNKNOWN` states.
+7. Test restore procedures regularly. For restart: stop ingress/workers gracefully, back up, deploy/migrate, start API, then workers, and watch failed/stalled counts.
+
+Troubleshooting: check the response `x-request-id` in structured logs; inspect `/admin/system` and `/admin/system/jobs`; verify Redis persistence/connectivity for missing work; restart a missing worker; resolve credentials or upstream health for open circuits; wait for cooldown before a probe; and reconcile unknown orders against the Order Engine before any manual retry. Do not paste secrets or raw customer addresses/phones into tickets.

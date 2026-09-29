@@ -69,6 +69,8 @@ export class ProductSyncService {
       data: {
         level: 'INFO',
         type: 'PRODUCT_SYNC_STARTED',
+          event: 'PRODUCT_SYNC_STARTED',
+          module: 'products',
         message: 'Product feed synchronization started',
         metadata: {
           status: 'started',
@@ -184,6 +186,8 @@ export class ProductSyncService {
         data: {
           level: progress.errors > 0 ? 'WARN' : 'INFO',
           type: 'PRODUCT_SYNC_COMPLETED',
+          event: 'PRODUCT_SYNC_COMPLETED',
+          module: 'products',
           message:
             progress.errors > 0
               ? 'Product feed synchronization completed with item errors'
@@ -204,6 +208,8 @@ export class ProductSyncService {
           data: {
             level: 'ERROR',
             type: 'PRODUCT_SYNC_FAILED',
+          event: 'PRODUCT_SYNC_FAILED',
+          module: 'products',
             message: 'Product feed synchronization failed',
             metadata: {
               status: 'failed',

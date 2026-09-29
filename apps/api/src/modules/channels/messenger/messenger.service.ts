@@ -1,4 +1,5 @@
 import type { PrismaClient } from '@alzeena/database';
+import type { Redis } from 'ioredis';
 import type { ChatService } from '../../conversations/chat.service.js';
 import { MessageService } from '../../conversations/message.service.js';
 import { MessengerSender } from './messenger.sender.js';
@@ -18,12 +19,28 @@ export class MessengerService {
     prisma: PrismaClient,
     private readonly chat: ChatService,
     private readonly sender: MessengerSender,
+    private readonly redis?: Redis,
   ) {
     this.db = prisma as any;
     this.messages = new MessageService(prisma);
   }
 
   async process(data: MessengerJobData) {
+    if (!this.redis) return this.processUnlocked(data);
+    const key = `conversation:processing:messenger:${data.event.senderId}`;
+    const token = `${data.eventLogId}:${Date.now()}`;
+    const acquired = await this.redis.set(key, token, 'PX', 60_000, 'NX');
+    if (!acquired) throw new MessengerProcessingError('Conversation is already being processed', true);
+    try { return await this.processUnlocked(data); }
+    finally {
+      await this.redis.eval(
+        "if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('del', KEYS[1]) else return 0 end",
+        1, key, token,
+      ).catch(() => undefined);
+    }
+  }
+
+  private async processUnlocked(data: MessengerJobData) {
     const log = await this.db.messengerEventLog.findUnique({ where: { id: data.eventLogId } });
     if (!log || log.status === 'PROCESSED' || log.status === 'IGNORED') return { duplicate: true };
     if (log.localOutboundMessageId) return this.retryDelivery(log, data.event);
@@ -44,7 +61,7 @@ export class MessengerService {
           ? { type: 'audio', url: data.event.attachmentUrl, source: 'messenger' }
           : undefined,
         externalMessageId: data.event.messageId,
-        sourceMetadata: this.inboundMetadata(data.event),
+        sourceMetadata: { ...this.inboundMetadata(data.event), ...(data.requestId ? { requestId: data.requestId } : {}) },
       });
       if (!result.reply || !('assistantMessageId' in result) || !result.assistantMessageId) {
         await this.complete(log.id);

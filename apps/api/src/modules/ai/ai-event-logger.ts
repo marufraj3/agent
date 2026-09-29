@@ -35,6 +35,8 @@ export class SystemLogAIEventLogger implements AIEventLogger {
         data: {
           level: event.success ? (event.requiresHuman ? 'WARN' : 'INFO') : 'ERROR',
           type: event.success ? 'AI_RESPONSE_GENERATED' : 'AI_RESPONSE_FAILED',
+          event: event.success ? 'AI_RESPONSE_GENERATED' : 'AI_RESPONSE_FAILED',
+          module: 'ai',
           message: event.success ? 'AI response generated' : 'AI response generation failed',
           metadata: {
             timestamp: new Date().toISOString(),

@@ -66,6 +66,17 @@ const envSchema = z.object({
 }).refine((values) => values.IMAGE_MATCH_MEDIUM_THRESHOLD < values.IMAGE_MATCH_HIGH_THRESHOLD, {
   message: 'IMAGE_MATCH_MEDIUM_THRESHOLD must be lower than IMAGE_MATCH_HIGH_THRESHOLD',
   path: ['IMAGE_MATCH_MEDIUM_THRESHOLD'],
+}).superRefine((values, context) => {
+  if (values.NODE_ENV === 'production' && !values.ADMIN_PASSWORD) {
+    context.addIssue({ code: 'custom', path: ['ADMIN_PASSWORD'], message: 'ADMIN_PASSWORD is required in production' });
+  }
+  if (values.NODE_ENV === 'production' && !values.FRONTEND_URL.startsWith('https://')) {
+    context.addIssue({ code: 'custom', path: ['FRONTEND_URL'], message: 'FRONTEND_URL must use HTTPS in production' });
+  }
+  const facebook = [values.FACEBOOK_APP_SECRET, values.FACEBOOK_PAGE_ID, values.FACEBOOK_PAGE_ACCESS_TOKEN, values.FACEBOOK_VERIFY_TOKEN];
+  if (facebook.some(Boolean) && !facebook.every(Boolean)) {
+    context.addIssue({ code: 'custom', path: ['FACEBOOK_APP_SECRET'], message: 'All Facebook webhook credentials must be configured together' });
+  }
 });
 
 const result = envSchema.safeParse(process.env);

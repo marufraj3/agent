@@ -126,14 +126,24 @@ model Setting {
 }
 
 model SystemLog {
-  id        String   @id @default(uuid()) @db.Uuid
-  level     LogLevel @default(INFO)
-  type      String   @db.VarChar(100)
-  message   String   @db.Text
-  metadata  Json?    @db.JsonB
-  createdAt DateTime @default(now()) @map("created_at")
+  id             String   @id @default(uuid()) @db.Uuid
+  level          LogLevel @default(INFO)
+  type           String   @db.VarChar(100)
+  event          String?  @db.VarChar(100)
+  module         String?  @db.VarChar(100)
+  message        String   @db.Text
+  requestId      String?  @map("request_id") @db.VarChar(128)
+  conversationId String?  @map("conversation_id") @db.Uuid
+  customerId     String?  @map("customer_id") @db.Uuid
+  metadata       Json?    @db.JsonB
+  createdAt      DateTime @default(now()) @map("created_at")
 
   @@index([type, createdAt])
+  @@index([event, createdAt])
+  @@index([module, createdAt])
+  @@index([requestId])
+  @@index([conversationId, createdAt])
+  @@index([customerId, createdAt])
   @@index([level, createdAt])
   @@index([createdAt])
   @@map("system_logs")

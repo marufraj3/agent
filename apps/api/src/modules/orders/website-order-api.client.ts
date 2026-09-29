@@ -1,3 +1,4 @@
+import { getCircuitBreaker } from '../../infrastructure/circuit-breaker.js';
 import type { BusinessSettings } from '../admin/settings.service.js';
 
 export interface WebsiteOrderPayloadItem {
@@ -38,6 +39,7 @@ export class WebsiteOrderApiError extends Error {
 }
 
 export class WebsiteOrderApiClient {
+  private readonly breaker = getCircuitBreaker('order-api');
   constructor(
     private readonly timeoutMs: number,
     private readonly fetchImpl: typeof fetch = fetch,
@@ -80,7 +82,7 @@ export class WebsiteOrderApiClient {
     const baseUrl = settings.websiteApiBaseUrl.replace(/\/$/, '');
     let response: Response;
     try {
-      response = await this.fetchImpl(`${baseUrl}/page/order/request`, {
+      response = await this.breaker.execute(() => this.fetchImpl(`${baseUrl}/page/order/request`, {
         method: 'POST',
         signal: controller.signal,
         headers: {
@@ -89,7 +91,7 @@ export class WebsiteOrderApiClient {
           'x-submission-reference': order.submissionReference,
         },
         body: JSON.stringify(this.buildPayload(order, settings)),
-      });
+      }));
     } catch (error) {
       clearTimeout(timeout);
       throw new WebsiteOrderApiError(

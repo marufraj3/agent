@@ -16,6 +16,7 @@ export interface NormalizedMessengerEvent {
 export interface MessengerJobData {
   eventLogId: string;
   event: NormalizedMessengerEvent;
+  requestId?: string;
 }
 
 export interface MessengerSendResult {

@@ -1,11 +1,11 @@
 import { Queue, type QueueOptions } from 'bullmq';
 import { createRedisConnection } from './redis.js';
 
-const defaultJobOptions: QueueOptions['defaultJobOptions'] = {
+export const queueRetryPolicy: QueueOptions['defaultJobOptions'] = {
   attempts: 3,
-  backoff: { type: 'exponential', delay: 1_000 },
-  removeOnComplete: 100,
-  removeOnFail: 500,
+  backoff: { type: 'exponential', delay: 2_000 },
+  removeOnComplete: 500,
+  removeOnFail: 2_000,
 };
 
 /**
@@ -15,7 +15,7 @@ const defaultJobOptions: QueueOptions['defaultJobOptions'] = {
 export function createQueue(name: string): Queue {
   return new Queue(name, {
     connection: createRedisConnection(),
-    defaultJobOptions,
+    defaultJobOptions: queueRetryPolicy,
     prefix: 'alzeena',
   });
 }

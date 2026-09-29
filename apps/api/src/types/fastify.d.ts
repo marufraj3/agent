@@ -2,6 +2,7 @@ import type { PrismaClient } from '@alzeena/database';
 import type { Redis } from 'ioredis';
 import type { ProductSyncQueue } from '../modules/products/product-sync.queue.js';
 import type { MessengerEventQueue } from '../modules/channels/messenger/messenger.queue.js';
+import type { QueueRegistry } from '../infrastructure/queue-registry.js';
 
 declare module 'fastify' {
   interface FastifyInstance {
@@ -9,5 +10,6 @@ declare module 'fastify' {
     redis: Redis;
     productSyncQueue: ProductSyncQueue;
     messengerEventQueue: MessengerEventQueue;
+    queues: QueueRegistry;
   }
 }

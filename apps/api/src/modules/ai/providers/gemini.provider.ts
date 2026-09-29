@@ -1,4 +1,5 @@
 import { GoogleGenAI } from '@google/genai';
+import { getCircuitBreaker } from '../../../infrastructure/circuit-breaker.js';
 import type {
   AIAudioProviderRequest,
   AIImageProviderRequest,
@@ -19,6 +20,7 @@ export class GeminiProvider implements AIProvider {
   readonly name = 'gemini';
   readonly model: string;
   private readonly client: GoogleGenAI;
+  private readonly breaker = getCircuitBreaker('gemini');
 
   constructor(private readonly config: GeminiProviderConfig) {
     this.model = config.model;
@@ -26,7 +28,7 @@ export class GeminiProvider implements AIProvider {
   }
 
   async generateStructured(request: AIProviderRequest): Promise<AIProviderResponse> {
-    const response = await this.client.models.generateContent({
+    const response = await this.reliable(() => this.client.models.generateContent({
       model: this.config.model,
       contents: request.prompt,
       config: {
@@ -37,7 +39,7 @@ export class GeminiProvider implements AIProvider {
         maxOutputTokens: this.config.maxOutputTokens,
         httpOptions: { timeout: this.config.timeoutMs },
       },
-    });
+    }));
 
     const text = response.text?.trim();
     if (!text) throw new Error('Gemini returned an empty response');
@@ -45,7 +47,7 @@ export class GeminiProvider implements AIProvider {
   }
 
   async analyzeImage(request: AIImageProviderRequest): Promise<AIProviderResponse> {
-    const response = await this.client.models.generateContent({
+    const response = await this.reliable(() => this.client.models.generateContent({
       model: this.config.model,
       contents: [
         {
@@ -69,7 +71,7 @@ export class GeminiProvider implements AIProvider {
         maxOutputTokens: this.config.maxOutputTokens,
         httpOptions: { timeout: this.config.timeoutMs },
       },
-    });
+    }));
 
     const text = response.text?.trim();
     if (!text) throw new Error('Gemini returned an empty image analysis response');
@@ -77,7 +79,7 @@ export class GeminiProvider implements AIProvider {
   }
 
   async transcribeAudio(request: AIAudioProviderRequest): Promise<AIProviderResponse> {
-    const response = await this.client.models.generateContent({
+    const response = await this.reliable(() => this.client.models.generateContent({
       model: this.config.model,
       contents: [
         {
@@ -101,10 +103,31 @@ export class GeminiProvider implements AIProvider {
         maxOutputTokens: this.config.maxOutputTokens,
         httpOptions: { timeout: this.config.timeoutMs },
       },
-    });
+    }));
 
     const text = response.text?.trim();
     if (!text) throw new Error('Gemini returned an empty audio transcription response');
     return { text, model: this.config.model };
   }
+
+  private async reliable<T>(operation: () => Promise<T>): Promise<T> {
+    let lastError: unknown;
+    for (let attempt = 1; attempt <= 2; attempt += 1) {
+      try { return await this.breaker.execute(operation); }
+      catch (error) {
+        lastError = error;
+        if (!this.isTemporary(error) || attempt === 2) throw error;
+        await new Promise((resolve) => setTimeout(resolve, 250 * attempt));
+      }
+    }
+    throw lastError;
+  }
+
+  private isTemporary(error: unknown): boolean {
+    if (!(error instanceof Error)) return false;
+    const value = error as Error & { status?: number; code?: number | string };
+    const status = Number(value.status ?? value.code);
+    return value.name === 'AbortError' || /timeout|temporar|network|fetch/i.test(value.message) || status === 429 || status >= 500;
+  }
+
 }

@@ -3,16 +3,22 @@ import type { FastifyInstance } from 'fastify';
 import { createProductSyncQueue } from '../modules/products/product-sync.queue.js';
 import { createMessengerEventQueue } from '../modules/channels/messenger/messenger.queue.js';
 import { createRedisConnection } from './redis.js';
+import { createQueueRegistry, queueNames } from './queue-registry.js';
 
 export async function registerInfrastructure(app: FastifyInstance): Promise<void> {
   const redis = createRedisConnection();
   const productSyncQueue = createProductSyncQueue();
   const messengerEventQueue = createMessengerEventQueue();
+  const queues = createQueueRegistry({
+    [queueNames.productSync]: productSyncQueue,
+    [queueNames.messengerEvents]: messengerEventQueue,
+  });
 
   app.decorate('prisma', prisma);
   app.decorate('redis', redis);
   app.decorate('productSyncQueue', productSyncQueue);
   app.decorate('messengerEventQueue', messengerEventQueue);
+  app.decorate('queues', queues);
 
   app.addHook('onReady', async () => {
     await Promise.all([
@@ -26,7 +32,7 @@ export async function registerInfrastructure(app: FastifyInstance): Promise<void
 
   app.addHook('onClose', async () => {
     await Promise.allSettled([
-      productSyncQueue.close(), messengerEventQueue.close(), prisma.$disconnect(), redis.quit(),
+      ...Object.values(queues).map((queue) => queue.close()), prisma.$disconnect(), redis.quit(),
     ]);
   });
 }

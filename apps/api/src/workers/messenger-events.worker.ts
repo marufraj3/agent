@@ -3,6 +3,7 @@ import { UnrecoverableError, Worker } from 'bullmq';
 import pino from 'pino';
 import { env } from '../config/env.js';
 import { createRedisConnection } from '../infrastructure/redis.js';
+import { startWorkerHeartbeat } from '../infrastructure/worker-heartbeat.js';
 import { createChatService } from '../modules/conversations/chat.factory.js';
 import { getMessengerConfig } from '../modules/channels/messenger/messenger.config.js';
 import {
@@ -22,10 +23,12 @@ const logger = pino({
 const connection = createRedisConnection();
 const controlQueue = createMessengerEventQueue();
 await Promise.all([prisma.$connect(), controlQueue.setGlobalConcurrency(1)]);
+const stopHeartbeat = startWorkerHeartbeat(connection, MESSENGER_QUEUE_NAME);
 const service = new MessengerService(
   prisma,
   createChatService(prisma, logger as any),
   new MessengerSender(getMessengerConfig()),
+  connection,
 );
 
 const worker = new Worker<MessengerJobData>(
@@ -45,9 +48,13 @@ worker.on('completed', (job) => logger.info({ jobId: job.id }, 'Messenger event 
 worker.on('failed', (job, error) => logger.error({ jobId: job?.id, errorType: error.name }, 'Messenger event failed'));
 worker.on('error', (error) => logger.error({ errorType: error.name }, 'Messenger worker error'));
 
+let shuttingDown = false;
 async function shutdown(signal: string) {
+  if (shuttingDown) return;
+  shuttingDown = true;
   logger.info({ signal }, 'Stopping Messenger worker');
   await worker.close();
+  await stopHeartbeat();
   await Promise.allSettled([controlQueue.close(), connection.quit(), prisma.$disconnect()]);
   process.exit(0);
 }

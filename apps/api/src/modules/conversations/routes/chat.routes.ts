@@ -1,6 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import { env } from '../../../config/env.js';
 import { AppError } from '../../../errors/app-error.js';
+import { enforceRateLimit } from '../../../infrastructure/rate-limit.js';
 import { requireAdmin } from '../../admin/auth/require-admin.js';
 import { enforceAIRateLimit } from '../../ai/ai-rate-limit.js';
 import { AudioFetchError } from '../../audio/audio.service.js';
@@ -33,6 +34,13 @@ export async function chatRoutes(app: FastifyInstance): Promise<void> {
         throw new AppError(message, 400, 'VALIDATION_ERROR');
       }
 
+      await enforceRateLimit(
+        app.redis, 'ai-customer',
+        `${parsed.data.customer.platform}:${parsed.data.customer.platformUserId}`, 60, 60,
+      );
+      if (parsed.data.conversationId) {
+        await enforceRateLimit(app.redis, 'ai-conversation', parsed.data.conversationId, 30, 60);
+      }
       const platformChannel = conversationChannels.find(
         (channel) => channel === parsed.data.customer.platform.toLowerCase(),
       );

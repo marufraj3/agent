@@ -1,3 +1,4 @@
+import { getCircuitBreaker } from '../../../infrastructure/circuit-breaker.js';
 import type { MessengerConfig } from './messenger.config.js';
 import type { MessengerSendResult } from './messenger.types.js';
 
@@ -13,24 +14,26 @@ function safeError(body: Record<string, unknown>) {
 }
 
 export class MessengerSender {
+  private readonly breaker = getCircuitBreaker('facebook');
   constructor(private readonly config: MessengerConfig, private readonly fetchImpl: typeof fetch = fetch) {}
 
   async sendText(recipientId: string, text: string): Promise<MessengerSendResult> {
     if (!this.config.pageId || !this.config.pageAccessToken) {
       return { success: false, errorCode: 'MESSENGER_NOT_CONFIGURED', errorMessage: 'Messenger delivery is not configured', retryable: false };
     }
+    const pageId = this.config.pageId;
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), this.config.timeoutMs);
     let response: Response;
     try {
-      response = await this.fetchImpl(
-        `https://graph.facebook.com/${this.config.graphApiVersion}/${encodeURIComponent(this.config.pageId)}/messages`,
+      response = await this.breaker.execute(() => this.fetchImpl(
+        `https://graph.facebook.com/${this.config.graphApiVersion}/${encodeURIComponent(pageId)}/messages`,
         {
           method: 'POST', signal: controller.signal,
           headers: { authorization: `Bearer ${this.config.pageAccessToken}`, 'content-type': 'application/json' },
           body: JSON.stringify({ recipient: { id: recipientId }, messaging_type: 'RESPONSE', message: { text } }),
         },
-      );
+      ));
     } catch (error) {
       clearTimeout(timeout);
       const timedOut = error instanceof Error && error.name === 'AbortError';

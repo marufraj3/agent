@@ -1,3 +1,5 @@
+import { getCircuitBreaker } from '../../infrastructure/circuit-breaker.js';
+
 export class ProductFeedResponseError extends Error {
   constructor(message: string) {
     super(message);
@@ -83,6 +85,7 @@ function errorMessage(error: unknown): string {
 
 export class ProductFeedClient {
   private readonly fetchImplementation: typeof fetch;
+  private readonly breaker = getCircuitBreaker('product-api');
 
   constructor(private readonly options: ProductFeedClientOptions) {
     this.fetchImplementation = options.fetchImplementation ?? fetch;
@@ -125,11 +128,11 @@ export class ProductFeedClient {
 
     for (let attempt = 1; attempt <= this.options.retries + 1; attempt += 1) {
       try {
-        const response = await this.fetchImplementation(url, {
+        const response = await this.breaker.execute(() => this.fetchImplementation(url, {
           method: 'GET',
           headers: { accept: 'application/json' },
           signal: AbortSignal.timeout(this.options.timeoutMs),
-        });
+        }));
 
         if (!response.ok) {
           const retryable = response.status === 408 || response.status === 429 || response.status >= 500;

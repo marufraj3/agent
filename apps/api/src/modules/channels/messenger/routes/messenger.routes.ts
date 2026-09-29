@@ -19,7 +19,7 @@ function enforceWebhookRate(request: FastifyRequest) {
   }
 }
 
-async function registerEvent(app: FastifyInstance, event: NormalizedMessengerEvent) {
+async function registerEvent(app: FastifyInstance, event: NormalizedMessengerEvent, requestId?: string) {
   const db = app.prisma as any;
   let log = await db.messengerEventLog.findUnique({ where: { externalEventId: event.externalEventId } });
   if (log && ['QUEUED', 'PROCESSING', 'PROCESSED', 'IGNORED'].includes(log.status)) return false;
@@ -42,7 +42,7 @@ async function registerEvent(app: FastifyInstance, event: NormalizedMessengerEve
     }
   }
   try {
-    await enqueueMessengerEvent(app.messengerEventQueue, { eventLogId: log.id, event });
+    await enqueueMessengerEvent(app.messengerEventQueue, { eventLogId: log.id, event, requestId });
     await db.messengerEventLog.update({ where: { id: log.id }, data: { status: 'QUEUED', errorMessage: null } });
     return true;
   } catch (error) {
@@ -85,9 +85,9 @@ export async function messengerRoutes(app: FastifyInstance): Promise<void> {
     if (!payload || payload.object !== 'page') throw new AppError('Unsupported Facebook webhook object', 404, 'UNSUPPORTED_WEBHOOK');
     const events = parser.parse(payload, config.pageId);
     try {
-      await Promise.all(events.map((event) => registerEvent(app, event)));
+      await Promise.all(events.map((event) => registerEvent(app, event, request.id)));
     } catch {
-      return reply.code(503).send({ error: { code: 'MESSENGER_QUEUE_UNAVAILABLE', message: 'Event will be retried' } });
+      return reply.code(503).send({ success: false, error: { code: 'MESSENGER_QUEUE_UNAVAILABLE', message: 'Event will be retried', requestId: request.id } });
     }
     return reply.code(200).send('EVENT_RECEIVED');
   });
@@ -101,7 +101,7 @@ export async function messengerRoutes(app: FastifyInstance): Promise<void> {
     if (!senderId || !pageId || !messageId || !text || text.length > 4_000) throw new AppError('senderId, pageId, messageId and text are required', 400, 'VALIDATION_ERROR');
     if (config.pageId && pageId !== config.pageId) throw new AppError('Page ID is not configured', 400, 'INVALID_PAGE_ID');
     const event: NormalizedMessengerEvent = { externalEventId: messageId, messageId, senderId, pageId, timestamp: Date.now(), messageType: 'text', text };
-    const queued = await registerEvent(app, event);
+    const queued = await registerEvent(app, event, request.id);
     return { success: true, data: { queued, externalEventId: event.externalEventId } };
   });
 
