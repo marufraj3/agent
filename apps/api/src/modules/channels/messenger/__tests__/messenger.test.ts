@@ -32,8 +32,8 @@ test('parses an image attachment for the existing image pipeline', () => {
   assert.equal(event.messageType, 'image'); assert.equal(event.attachmentUrl, 'https://cdn.example/image.jpg');
 });
 test('parses a voice attachment for the existing audio pipeline', () => {
-  const event = new MessengerEventParser().parse(payload({ mid: 'm3', attachments: [{ type: 'audio', payload: { url: 'https://cdn.example/voice.mp4' } }] }), 'page-1')[0]!;
-  assert.equal(event.messageType, 'audio');
+  const event = new MessengerEventParser().parse(payload({ mid: 'm3', attachments: [{ type: 'audio', payload: { url: 'https://cdn.example/voice.mp4', mime_type: 'audio/mp4' } }] }), 'page-1')[0]!;
+  assert.equal(event.messageType, 'audio'); assert.equal(event.mimeType, 'audio/mp4');
 });
 test('normalizes unsupported attachments without crashing', () => {
   const event = new MessengerEventParser().parse(payload({ mid: 'm4', attachments: [{ type: 'file', payload: { url: 'https://cdn.example/a.pdf' } }] }), 'page-1')[0]!;
@@ -106,7 +106,7 @@ function serviceMemory(options: { chatResult?: any; sendResult?: any; status?: s
   const log: any = { id: 'log-1', status: options.status ?? 'QUEUED', localOutboundMessageId: options.outboundId ?? null };
   const messages = new Map<string, any>();
   if (options.outboundId) messages.set(options.outboundId, { id: options.outboundId, content: 'retry me', metadata: {} });
-  const updates: any[] = []; const chatInputs: any[] = []; let sends = 0;
+  const updates: any[] = []; const chatInputs: any[] = []; const audioInputs: any[] = []; let sends = 0;
   const db: any = {
     messengerEventLog: { findUnique: async () => log, update: async ({ data }: any) => { Object.assign(log, data); return log; } },
     message: {
@@ -117,7 +117,8 @@ function serviceMemory(options: { chatResult?: any; sendResult?: any; status?: s
   const chat: any = { send: async (input: any) => { chatInputs.push(input); const result = options.chatResult ?? { reply: 'AI reply', assistantMessageId: 'assistant-1' }; messages.set('assistant-1', { id: 'assistant-1', content: result.reply, metadata: { intent: 'x' } }); return result; } };
   const sender: any = { sendText: async () => { sends += 1; return options.sendResult ?? { success: true, externalMessageId: 'meta-out-1', retryable: false }; } };
   const event = { externalEventId: 'meta-in-1', messageId: 'meta-in-1', senderId: 'psid-1', pageId: 'page-1', timestamp: 123, messageType: 'text' as const, text: 'hello' };
-  return { service: new MessengerService(db, chat, sender), log, messages, updates, chatInputs, event, sends: () => sends };
+  const audioIngestion: any = { ingest: async (...input: any[]) => { audioInputs.push(input); return { messageId: 'audio-message-1', conversationId: 'conversation-1', customerId: 'customer-1' }; } };
+  return { service: new MessengerService(db, chat, sender, undefined, audioIngestion), log, messages, updates, chatInputs, audioInputs, event, sends: () => sends };
 }
 
 test('processor maps new and existing Messenger customers through the same ChatService input', async () => {
@@ -132,9 +133,14 @@ test('processor routes images through the existing ChatService image input', asy
   const memory = serviceMemory(); const event: any = { ...memory.event, messageType: 'image', attachmentUrl: 'https://cdn.example/i.jpg', text: '' };
   await memory.service.process({ eventLogId: 'log-1', event }); assert.equal(memory.chatInputs[0].image.url, event.attachmentUrl);
 });
-test('processor routes voice through the existing ChatService audio input', async () => {
+test('processor persists and queues voice without invoking ChatService or STT inline', async () => {
   const memory = serviceMemory(); const event: any = { ...memory.event, messageType: 'audio', attachmentUrl: 'https://cdn.example/a.mp4', text: '' };
-  await memory.service.process({ eventLogId: 'log-1', event }); assert.equal(memory.chatInputs[0].audio.url, event.attachmentUrl);
+  const result = await memory.service.process({ eventLogId: 'log-1', event });
+  assert.equal(memory.audioInputs.length, 1);
+  assert.equal(memory.chatInputs.length, 0);
+  assert.equal(memory.sends(), 0);
+  assert.equal(memory.log.status, 'QUEUED');
+  assert.equal('queued' in result && result.queued, true);
 });
 test('human-owned conversation result does not produce an automatic outbound reply', async () => {
   const memory = serviceMemory({ chatResult: { reply: null, conversationStatus: 'human' } });
@@ -171,7 +177,13 @@ async function webhookApp() {
   process.env.FACEBOOK_PAGE_ID = config.pageId;
   process.env.FACEBOOK_PAGE_ACCESS_TOKEN = config.pageAccessToken;
   const [{ default: Fastify }, { messengerRoutes }] = await Promise.all([import('fastify'), import('../routes/messenger.routes.js')]);
-  const logs: any[] = []; const queued: any[] = [];
+  const logs: any[] = []; const queued: any[] = []; const audioQueued: any[] = []; const messages: any[] = []; const audioRecords: any[] = [];
+  const customer = { id: 'customer-1', platform: 'messenger', platformUserId: 'user-1' };
+  const conversation = { id: 'conversation-1', customerId: customer.id, channel: 'MESSENGER', status: 'ACTIVE' };
+  const transaction: any = {
+    message: { create: async ({ data }: any) => { const value = { id: `message-${messages.length + 1}`, ...data }; messages.push(value); return value; } },
+    conversation: { update: async () => conversation },
+  };
   const db: any = {
     messengerEventLog: {
       findUnique: async ({ where }: any) => logs.find((item) => item.externalEventId === where.externalEventId) ?? null,
@@ -179,9 +191,17 @@ async function webhookApp() {
       update: async ({ where, data }: any) => { const item = logs.find((value) => value.id === where.id); return Object.assign(item, data); },
       findFirst: async () => null,
     },
+    message: { findUnique: async ({ where }: any) => messages.find((item) => item.externalMessageId === where.externalMessageId) ?? null },
+    customer: { upsert: async () => customer },
+    conversation: { findFirst: async () => conversation, create: async () => conversation },
+    audioTranscription: { create: async ({ data }: any) => { const value = { id: `audio-${audioRecords.length + 1}`, ...data }; audioRecords.push(value); return value; }, findUnique: async () => null },
+    $transaction: async (value: any) => typeof value === 'function' ? value(transaction) : Promise.all(value),
   };
-  const app = Fastify(); app.decorate('prisma', db); app.decorate('messengerEventQueue', { add: async (_name: string, data: any) => { queued.push(data); return { id: 'job-1' }; } } as never);
-  await app.register(messengerRoutes); return { app, logs, queued };
+  const app = Fastify(); app.decorate('prisma', db);
+  app.decorate('redis', { incr: async () => 1, expire: async () => 1 } as never);
+  app.decorate('messengerEventQueue', { add: async (_name: string, data: any) => { queued.push(data); return { id: 'job-1' }; } } as never);
+  app.decorate('audioTranscriptionQueue', { add: async (_name: string, data: any) => { audioQueued.push(data); return { id: 'audio-job-1' }; } } as never);
+  await app.register(messengerRoutes); return { app, logs, queued, audioQueued, messages, audioRecords };
 }
 
 test('Facebook webhook verification returns the exact challenge', async () => {
@@ -199,6 +219,18 @@ test('signed Facebook webhook is persisted, queued, and acknowledged without AI 
   const signature = `sha256=${createHmac('sha256', secret).update(raw).digest('hex')}`;
   const result = await app.inject({ method: 'POST', url: '/api/webhooks/facebook', headers: { 'content-type': 'application/json', 'x-hub-signature-256': signature }, payload: raw });
   assert.equal(result.statusCode, 200); assert.equal(result.body, 'EVENT_RECEIVED'); assert.equal(logs.length, 1); assert.equal(queued.length, 1); await app.close();
+});
+test('signed voice webhook persists audio lifecycle and queues STT before acknowledging', async () => {
+  const { app, queued, audioQueued, messages, audioRecords } = await webhookApp();
+  const raw = JSON.stringify(payload({ mid: 'webhook-audio-1', attachments: [{ type: 'audio', payload: { url: 'https://cdn.example/voice.ogg', mime_type: 'audio/ogg' } }] }));
+  const signature = `sha256=${createHmac('sha256', secret).update(raw).digest('hex')}`;
+  const result = await app.inject({ method: 'POST', url: '/api/webhooks/facebook', headers: { 'content-type': 'application/json', 'x-hub-signature-256': signature }, payload: raw });
+  assert.equal(result.statusCode, 200);
+  assert.equal(messages[0].messageType, 'AUDIO');
+  assert.equal(audioRecords[0].status, 'PENDING');
+  assert.equal(audioQueued.length, 1);
+  assert.equal(queued.length, 0);
+  await app.close();
 });
 test('Facebook webhook rejects invalid signatures before persistence', async () => {
   const { app, logs } = await webhookApp(); const raw = JSON.stringify(payload({ mid: 'webhook-mid-2', text: 'hello' }));

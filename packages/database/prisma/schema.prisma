@@ -377,11 +377,54 @@ model Message {
   createdAt         DateTime     @default(now()) @map("created_at")
   conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
   customer       Customer?    @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  audioTranscription AudioTranscription?
 
   @@index([conversationId, createdAt])
   @@index([customerId, createdAt])
   @@index([createdAt])
   @@map("messages")
+}
+
+enum AudioTranscriptionStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  FAILED
+  UNSUPPORTED
+  EXPIRED
+}
+
+model AudioTranscription {
+  id                   String                   @id @default(uuid()) @db.Uuid
+  messageId            String                   @unique @map("message_id") @db.Uuid
+  providerUrl          String?                  @map("provider_url") @db.Text
+  sourceMimeType       String?                  @map("source_mime_type") @db.VarChar(100)
+  detectedMimeType     String?                  @map("detected_mime_type") @db.VarChar(100)
+  durationSeconds      Float?                   @map("duration_seconds")
+  fileSizeBytes        Int?                     @map("file_size_bytes")
+  status               AudioTranscriptionStatus @default(PENDING)
+  originalTranscript   String?                  @map("original_transcript") @db.Text
+  normalizedTranscript String?                  @map("normalized_transcript") @db.Text
+  language             String?                  @db.VarChar(20)
+  confidence           Float?
+  provider             String?                  @db.VarChar(50)
+  model                String?                  @db.VarChar(100)
+  attemptCount         Int                      @default(0) @map("attempt_count")
+  errorCode            String?                  @map("error_code") @db.VarChar(100)
+  sttDurationMs        Int?                     @map("stt_duration_ms")
+  aiDurationMs         Int?                     @map("ai_duration_ms")
+  totalDurationMs      Int?                     @map("total_duration_ms")
+  processingStartedAt  DateTime?                @map("processing_started_at")
+  transcribedAt        DateTime?                @map("transcribed_at")
+  aiProcessedAt        DateTime?                @map("ai_processed_at")
+  retainedUntil        DateTime?                @map("retained_until")
+  createdAt            DateTime                 @default(now()) @map("created_at")
+  updatedAt            DateTime                 @updatedAt @map("updated_at")
+  message              Message                  @relation(fields: [messageId], references: [id], onDelete: Cascade)
+
+  @@index([status, createdAt])
+  @@index([retainedUntil])
+  @@map("audio_transcriptions")
 }
 
 enum HandoverReason {

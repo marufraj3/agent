@@ -28,8 +28,11 @@ const extensionMimeTypes: Record<string, SupportedAudioMimeType> = {
   '.webm': 'audio/webm',
   '.mp4': 'audio/mp4',
   '.m4a': 'audio/m4a',
+  '.aac': 'audio/aac',
+  '.flac': 'audio/flac',
+  '.amr': 'audio/amr',
 };
-const knownUnsupportedAudioExtensions = new Set(['.aac', '.flac', '.wma', '.amr', '.aiff']);
+const knownUnsupportedAudioExtensions = new Set(['.wma', '.aiff']);
 const compatibleMimeFamilies = [
   new Set(['audio/ogg', 'audio/opus']),
   new Set(['audio/mpeg', 'audio/mp3']),
@@ -132,6 +135,7 @@ export class AudioValidationService {
         ? 'audio/opus'
         : 'audio/ogg';
     }
+    if (data.length >= 2 && data[0] === 0xff && (data[1]! & 0xf6) === 0xf0) return 'audio/aac';
     const mp3Start = data.subarray(0, 3).toString('ascii') === 'ID3' && data.length >= 10
       ? Math.min(
           data.length,
@@ -141,6 +145,8 @@ export class AudioValidationService {
     for (let index = mp3Start; index + 1 < Math.min(data.length, mp3Start + 4_096); index += 1) {
       if (data[index] === 0xff && (data[index + 1]! & 0xe0) === 0xe0) return 'audio/mpeg';
     }
+    if (data.length >= 4 && data.subarray(0, 4).toString('ascii') === 'fLaC') return 'audio/flac';
+    if (data.length >= 6 && data.subarray(0, 6).toString('ascii') === '#!AMR\n') return 'audio/amr';
     if (data.length >= 8 && data.subarray(0, 4).equals(Buffer.from([0x1a, 0x45, 0xdf, 0xa3]))) return 'audio/webm';
     if (data.length >= 12 && data.subarray(4, 8).toString('ascii') === 'ftyp') {
       const brand = data.subarray(8, 12).toString('ascii').toLowerCase();

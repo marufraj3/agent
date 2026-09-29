@@ -362,7 +362,7 @@ npm run prisma:generate
 
 ## Step 11 Facebook Messenger and Meta Webhooks
 
-Messenger is an isolated channel adapter. The webhook validates Meta's HMAC SHA-256 signature against the exact raw request bytes, normalizes supported Page `messages` events, persists a minimal event log, deduplicates by Meta message ID, queues `messenger-events`, and immediately acknowledges Meta. The Messenger worker invokes the same `ChatService`, image/audio pipelines, Product DB, Order Engine, and Human Handover used by existing channels.
+Messenger is an isolated channel adapter. The webhook validates Meta's HMAC SHA-256 signature against the exact raw request bytes, normalizes supported Page `messages` events, persists a minimal event log, deduplicates by Meta message ID, queues `messenger-events`, and immediately acknowledges Meta. The Messenger worker invokes the same `ChatService`, image pipeline, Product DB, Order Engine, and Human Handover used by existing channels. Voice attachments are persisted as pending metadata and handed to the dedicated `audio-transcription` worker; audio download and speech-to-text never execute in the webhook request.
 
 Endpoints:
 
@@ -578,7 +578,12 @@ Run the compiled backend with `npm run start --workspace=@alzeena/api`. Run the 
 | `MAX_AUDIO_SIZE_MB` | Maximum downloaded or uploaded audio size | Used |
 | `MAX_AUDIO_DURATION_SECONDS` | Maximum accepted/detected audio duration | Used |
 | `AUDIO_REQUEST_TIMEOUT_MS` | Audio download and transcription timeout | Used |
-| `VOICE_TRANSCRIPTION_LOW_CONFIDENCE` | Clarification threshold for uncertain transcription | Used |
+| `VOICE_TRANSCRIPTION_LOW_CONFIDENCE` | Clarification threshold when a provider supplies confidence | Used |
+| `STT_PROVIDER`, `STT_MODEL` | Server-only speech provider and model | Used by audio worker |
+| `STT_TIMEOUT`, `STT_MAX_FILE_SIZE`, `STT_MAX_DURATION` | STT timeout (seconds), byte-size ceiling (MB), and duration ceiling | Used by audio worker |
+| `AUDIO_RETENTION_HOURS` | Optional best-effort provider-audio retention for admin debugging; `0` deletes/unlinks immediately | Used by audio worker |
+| `AUDIO_DEBOUNCE_MS` | Short merge window for consecutive voice notes | Used by audio worker |
+| `AUDIO_RATE_LIMIT_PER_MINUTE` | Per-customer voice-note safety limit | Used by Messenger worker |
 | `FACEBOOK_PAGE_ACCESS_TOKEN` | Server-only Page token for Messenger Send API | Used |
 | `FACEBOOK_APP_SECRET`, `FACEBOOK_VERIFY_TOKEN` | Webhook signature and verification secrets | Used |
 | `FACEBOOK_APP_ID`, `FACEBOOK_PAGE_ID` | Meta application/Page identifiers | Used |
@@ -611,6 +616,8 @@ Run workers separately from the API:
 ```bash
 npm run start:worker --workspace=@alzeena/api
 npm run start:messenger-worker --workspace=@alzeena/api
+npm run start:audio-worker --workspace=@alzeena/api
+npm run start:followup-worker --workspace=@alzeena/api
 ```
 
 BullMQ persists waiting/delayed/failed work in Redis and recovers stalled work after restart. Stop with SIGTERM and allow the API/workers to drain. The workers publish expiring Redis heartbeats. Visit `/admin/system/jobs` to inspect counts and retained failures; failed jobs can be explicitly retried or removed. Never retry an order whose external outcome is unknown without reconciliation.
@@ -659,3 +666,9 @@ The responsive admin console is organized around Dashboard, Inbox, Customers, Or
 - `/admin/system`, `/admin/system/jobs`, and `/admin/system/logs` — health/queues, paginated retained failures, authorized stack detail, and sanitized structured logs.
 
 Apply migration `20260929220000_admin_dashboard` to create and seed `quick_replies`. Dashboard/customers/orders/products/logs/jobs queries paginate and filter in PostgreSQL or Redis; the browser does not fetch entire datasets. Messenger image attachment sending is not offered because the current Step 11 outbound delivery provider supports text only; inbound images/audio are previewed safely. Full WebSockets remain future work, while inbox polling and isolated loading functions provide a replaceable real-time boundary.
+
+## Step 16 queued voice/audio understanding
+
+Messenger audio ingestion creates the ordinary inbound `Message` plus one linked `AudioTranscription` lifecycle record, enqueues only identifiers on `audio-transcription`, and returns control to the Messenger worker. The audio worker securely downloads and validates bounded audio, transcribes through `SpeechToTextProvider`, preserves the original transcript and nullable provider confidence, stores normalization separately, and clears the provider URL by default. No audio BLOB or internal file path is stored.
+
+Completed consecutive voice notes are merged after a short debounce and enter the same `ChatService`, Product DB, Knowledge Base, Order Engine, customer memory, follow-up, and handover orchestration as text/image messages. Each original transcript remains on its own lifecycle record. Temporary dependency failures use three exponential retries; permanent validation failures do not retry. Repeated failures can hand over to an admin, while customer responses stay non-technical. Start `audio-transcription.worker.ts` separately and apply migration `20260930023000_voice_audio_understanding` before enabling voice processing. Admin Inbox shows status, language, duration, retained playback, and an admin-only re-transcribe action while the source remains available.

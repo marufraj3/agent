@@ -7,6 +7,7 @@ import { getMessengerConfig } from '../../channels/messenger/messenger.config.js
 import { MessengerMessageDeliveryProvider } from '../../channels/messenger/messenger.delivery.js';
 import { MessengerSender } from '../../channels/messenger/messenger.sender.js';
 import { HumanHandoverService, DEFAULT_ADMIN_ACTOR } from '../../handovers/human-handover.service.js';
+import { enqueueAudioTranscription } from '../../audio/audio-transcription.queue.js';
 import { HandoverError } from '../../handovers/handover.types.js';
 import { AdminInboxService, InboxError } from '../admin-inbox.service.js';
 import { MessageDeliveryService, TestMessageDeliveryProvider } from '../message-delivery.service.js';
@@ -53,6 +54,25 @@ export async function inboxRoutes(app: FastifyInstance): Promise<void> {
     const { content } = parse(humanMessageSchema, request.body);
     try { return { success: true, data: await inbox.sendHumanMessage(id, content) }; }
     catch (error) { mapError(error); }
+  });
+
+  app.post('/api/admin/messages/:id/retranscribe', protectedRoute, async (request) => {
+    const { id } = parse(conversationParamsSchema, request.params);
+    const db = app.prisma as any;
+    const audio = await db.audioTranscription.findUnique({
+      where: { messageId: id }, include: { message: { include: { customer: true } } },
+    });
+    if (!audio) throw new AppError('Audio message not found', 404, 'AUDIO_NOT_FOUND');
+    if (!audio.providerUrl || !audio.retainedUntil || audio.retainedUntil <= new Date()) {
+      throw new AppError('Retained audio is no longer available', 410, 'AUDIO_EXPIRED');
+    }
+    await db.audioTranscription.update({ where: { messageId: id }, data: { status: 'PENDING', errorCode: null } });
+    await enqueueAudioTranscription(app.audioTranscriptionQueue, {
+      messageId: id, eventLogId: `admin:${id}`,
+      senderId: audio.message.customer?.platformUserId ?? 'admin-retranscription',
+      retranscribeOnly: true,
+    });
+    return { success: true, data: { messageId: id, status: 'PENDING' } };
   });
 
   const assign = async (request: any) => {

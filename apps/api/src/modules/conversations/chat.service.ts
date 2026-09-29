@@ -27,6 +27,10 @@ export interface ChatInput {
   message?: string;
   image?: ImageInput;
   audio?: AudioInput;
+  /** Server-internal transcript produced by the dedicated audio worker. */
+  audioTranscription?: Transcription;
+  /** Server-internal persisted inbound message to process without creating a duplicate. */
+  existingMessageId?: string;
   channel: ConversationChannelName;
   conversationId?: string;
   newConversation?: boolean;
@@ -145,14 +149,20 @@ export class ChatService {
     const initialContent = additionalText || (input.audio ? '[Voice message]' : 'Which product is shown in this image?');
 
     if (conversation.status === 'HUMAN') {
-      const message = await this.messages.addMessage({
+      const persisted = input.existingMessageId
+        ? await this.messages.getMessage(input.existingMessageId)
+        : null;
+      if (input.existingMessageId && (!persisted || persisted.conversationId !== conversation.id || persisted.customerId !== customer.id)) {
+        throw new ConversationAccessError('Persisted message is unavailable for this customer');
+      }
+      const message = persisted ?? await this.messages.addMessage({
         conversationId: conversation.id,
         customerId: customer.id,
         role: 'user',
         content: initialContent,
-        messageType: input.audio ? 'audio' : input.image ? 'image' : 'text',
+        messageType: input.audio || input.audioTranscription ? 'audio' : input.image ? 'image' : 'text',
         externalMessageId: input.externalMessageId,
-        ...(input.image || input.audio || input.sourceMetadata
+        ...(input.image || input.audio || input.audioTranscription || input.sourceMetadata
           ? {
               metadata: {
                 ...(input.sourceMetadata && typeof input.sourceMetadata === 'object' && !Array.isArray(input.sourceMetadata) ? input.sourceMetadata : {}),
@@ -226,14 +236,24 @@ export class ChatService {
         : {}),
       productIds: imageProductIds,
     };
-    const userMessage = await this.messages.addMessage({
+    const persistedMessage = input.existingMessageId
+      ? await this.messages.getMessage(input.existingMessageId)
+      : null;
+    if (input.existingMessageId && (
+      !persistedMessage || persistedMessage.conversationId !== conversation.id ||
+      persistedMessage.customerId !== customer.id || persistedMessage.role !== 'USER'
+    )) throw new ConversationAccessError('Persisted message is unavailable for this customer');
+    const persistedMetadata = persistedMessage?.metadata && typeof persistedMessage.metadata === 'object' && !Array.isArray(persistedMessage.metadata)
+      ? persistedMessage.metadata as Record<string, unknown>
+      : {};
+    const userMessage = persistedMessage ?? await this.messages.addMessage({
       conversationId: conversation.id,
       customerId: customer.id,
       role: 'user',
       content: initialContent,
-      messageType: input.audio ? 'audio' : input.image ? 'image' : 'text',
+      messageType: input.audio || input.audioTranscription ? 'audio' : input.image ? 'image' : 'text',
       externalMessageId: input.externalMessageId,
-      ...(input.audio || input.image || input.sourceMetadata ? { metadata: baseMetadata } : {}),
+      ...(input.audio || input.audioTranscription || input.image || input.sourceMetadata ? { metadata: baseMetadata } : {}),
     });
     await this.followUps?.cancelPending(conversation.id, 'customer_replied');
     const optOut = /(?:আর\s*(?:message|মেসেজ)\s*(?:দিয়েন|দিবেন)\s*না|follow-?up\s*(?:লাগবে না|বন্ধ)|stop\s*(?:messages?|follow-?ups?))/iu.test(initialContent);
@@ -245,19 +265,22 @@ export class ChatService {
       else await this.journey?.record(customer.id, 'MESSAGE_RECEIVED', { summary: 'Customer sent a message', conversationId: conversation.id });
     } catch { /* Journey logging must not interrupt customer messaging. */ }
 
-    let transcription: Transcription | undefined;
+    let transcription: Transcription | undefined = input.audioTranscription;
     let voiceProductIds: number[] = [];
     let customerMessage = initialContent;
     let response: AIResponse | undefined;
-    if (preparedAudio && this.voice) {
+    if ((preparedAudio || transcription) && this.voice) {
       try {
-        transcription = reusableTranscription ?? (await this.voice.transcribe(preparedAudio));
+        if (!transcription && preparedAudio) {
+          transcription = reusableTranscription ?? (await this.voice.transcribe(preparedAudio));
+        }
       } catch {
         await this.messages.updateMessage(userMessage.id, {
           content: additionalText || '[Voice message could not be transcribed]',
           metadata: {
+            ...persistedMetadata,
             ...baseMetadata,
-            transcription: { status: 'failed' },
+            transcription: { status: 'FAILED' },
           },
         });
         response = voiceClarificationResponse('failed');
@@ -279,10 +302,12 @@ export class ChatService {
         await this.messages.updateMessage(userMessage.id, {
           content: customerMessage,
           metadata: {
+            ...persistedMetadata,
             ...baseMetadata,
             productIds: [...new Set([...imageProductIds, ...voiceProductIds])],
             verifiedProductCodes: normalized.verifiedCodes,
             transcription: {
+              status: 'COMPLETED',
               text: transcription.text,
               language: transcription.language,
               confidence: transcription.confidence,

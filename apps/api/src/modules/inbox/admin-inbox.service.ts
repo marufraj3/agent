@@ -104,7 +104,14 @@ export class AdminInboxService {
       where: { id },
       include: {
         customer: true,
-        messages: { orderBy: [{ createdAt: 'desc' }, { id: 'desc' }], skip: (messagePage - 1) * messageLimit, take: messageLimit },
+        messages: {
+          orderBy: [{ createdAt: 'desc' }, { id: 'desc' }], skip: (messagePage - 1) * messageLimit, take: messageLimit,
+          include: { audioTranscription: { select: {
+            status: true, originalTranscript: true, normalizedTranscript: true, language: true,
+            confidence: true, durationSeconds: true, fileSizeBytes: true, provider: true, model: true,
+            sttDurationMs: true, aiDurationMs: true, totalDurationMs: true, transcribedAt: true, retainedUntil: true,
+          } } },
+        },
         handovers: { orderBy: { createdAt: 'desc' }, take: 20 },
         orders: { orderBy: { createdAt: 'desc' }, take: 20, include: { items: true } },
         notifications: { orderBy: { createdAt: 'desc' }, take: 20 },

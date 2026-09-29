@@ -8,6 +8,7 @@ export const queueNames = {
   orderProcessing: 'order-processing',
   notifications: 'notifications',
   customerFollowups: 'customer-followups',
+  audioTranscription: 'audio-transcription',
 } as const;
 export type QueueName = (typeof queueNames)[keyof typeof queueNames];
 export type QueueRegistry = Record<QueueName, Queue>;

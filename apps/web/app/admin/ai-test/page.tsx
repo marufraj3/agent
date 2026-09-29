@@ -39,7 +39,7 @@ type ChatItem = {
 type Transcription = {
   text: string;
   language: string;
-  confidence: number;
+  confidence: number | null;
   duration: number | null;
 };
 type ChatResult = {
@@ -255,7 +255,7 @@ export default function AiTestPage() {
               {item.imagePreview ? <img src={item.imagePreview} alt="Customer product preview" className="mb-3 max-h-56 rounded-xl object-contain" /> : null}
               {item.audioPreview ? <audio controls src={item.audioPreview} className="mb-3 max-w-full" /> : null}
               <p className="whitespace-pre-wrap leading-6">{item.content}</p>
-              {item.transcription ? <div className="mt-3 rounded-xl border border-amber-200 bg-white/80 p-3 text-xs text-stone-700"><p className="font-semibold">Transcription</p><p className="mt-1 text-sm">{item.transcription.text}</p><p className="mt-1">{item.transcription.language} · {Math.round(item.transcription.confidence * 100)}% confidence{item.transcription.duration !== null ? ` · ${item.transcription.duration}s` : ''}</p></div> : null}
+              {item.transcription ? <div className="mt-3 rounded-xl border border-amber-200 bg-white/80 p-3 text-xs text-stone-700"><p className="font-semibold">Transcription</p><p className="mt-1 text-sm">{item.transcription.text}</p><p className="mt-1">{item.transcription.language} · {item.transcription.confidence === null ? 'confidence unavailable' : `${Math.round(item.transcription.confidence * 100)}% confidence`}{item.transcription.duration !== null ? ` · ${item.transcription.duration}s` : ''}</p></div> : null}
               {item.detail ? <p className="mt-2 text-xs text-amber-800">{item.detail}</p> : null}
               {item.diagnostic ? <details className="mt-3 rounded-xl border border-amber-200 bg-white/80 p-3 text-xs text-stone-700"><summary className="cursor-pointer font-semibold">AI debug</summary><p className="mt-2">Entities: {JSON.stringify(item.diagnostic.entities ?? {})}</p><p className="mt-1">Products: {item.diagnostic.products?.map((product) => `${product.productName} (${product.productCode})`).join(', ') || 'none'}</p><p className="mt-1">Model: {item.diagnostic.debug?.model ?? 'local'} · {item.diagnostic.debug?.latencyMs ?? 0}ms</p><p className="mt-1">Tools: {item.diagnostic.debug?.toolCalls.map((tool) => `${tool.tool} ${tool.status} (${tool.durationMs}ms)`).join(' · ') || 'none'}</p></details> : null}
               {match ? <div className="mt-3 rounded-xl border border-amber-200 bg-white/80 p-3 text-xs text-stone-700">

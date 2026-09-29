@@ -2,6 +2,7 @@ import type { PrismaClient } from '@alzeena/database';
 import type { Redis } from 'ioredis';
 import type { ChatService } from '../../conversations/chat.service.js';
 import { MessageService } from '../../conversations/message.service.js';
+import { AudioRateLimitError, type AudioIngestionService } from '../../audio/audio-ingestion.service.js';
 import { MessengerSender } from './messenger.sender.js';
 import type { MessengerJobData, NormalizedMessengerEvent } from './messenger.types.js';
 
@@ -20,6 +21,7 @@ export class MessengerService {
     private readonly chat: ChatService,
     private readonly sender: MessengerSender,
     private readonly redis?: Redis,
+    private readonly audioIngestion?: AudioIngestionService,
   ) {
     this.db = prisma as any;
     this.messages = new MessageService(prisma);
@@ -48,6 +50,24 @@ export class MessengerService {
       where: { id: log.id }, data: { status: 'PROCESSING', errorMessage: null },
     });
     try {
+      if (data.event.messageType === 'audio') {
+        if (!this.audioIngestion) throw new MessengerProcessingError('Audio ingestion is unavailable', true);
+        try {
+          const ingested = await this.audioIngestion.ingest(data.event, log.id, data.requestId);
+          await this.db.messengerEventLog.update({ where: { id: log.id }, data: { status: 'QUEUED', errorMessage: null } });
+          return { queued: true, messageId: ingested.messageId };
+        } catch (error) {
+          if (!(error instanceof AudioRateLimitError)) throw error;
+          const inbound = await this.db.message.findUnique({ where: { id: error.messageId } });
+          const assistant = await this.messages.addMessage({
+            conversationId: error.conversationId, customerId: inbound?.customerId ?? null,
+            role: 'assistant', content: 'একটু সময় নিয়ে আবার ভয়েস পাঠাবেন, অথবা কথাটি লিখে দিন।',
+            messageType: 'text', metadata: { inputType: 'audio', audioFailure: 'rate_limited', platform: 'messenger', direction: 'outbound' },
+          });
+          await this.db.messengerEventLog.update({ where: { id: log.id }, data: { localOutboundMessageId: assistant.id } });
+          return this.deliver(log.id, assistant.id, data.event.senderId, assistant.content);
+        }
+      }
       const result = await this.chat.send({
         customer: { platform: 'messenger', platformUserId: data.event.senderId },
         channel: 'messenger',
@@ -56,9 +76,6 @@ export class MessengerService {
           : undefined,
         image: data.event.messageType === 'image' && data.event.attachmentUrl
           ? { type: 'image', url: data.event.attachmentUrl, source: 'messenger' }
-          : undefined,
-        audio: data.event.messageType === 'audio' && data.event.attachmentUrl
-          ? { type: 'audio', url: data.event.attachmentUrl, source: 'messenger' }
           : undefined,
         externalMessageId: data.event.messageId,
         sourceMetadata: { ...this.inboundMetadata(data.event), ...(data.requestId ? { requestId: data.requestId } : {}) },

@@ -11,7 +11,7 @@ type MessageMetadata = {
   transcription?: {
     text?: string;
     language?: string;
-    confidence?: number;
+    confidence?: number | null;
     status?: string;
   };
 };

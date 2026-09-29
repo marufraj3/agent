@@ -48,9 +48,12 @@ test('validates OGG/Opus, MP3, WAV and WebM signatures', () => {
   assert.equal(validation.validateBuffer(webm, 'audio/webm'), 'audio/webm');
 });
 
-test('rejects unsupported and malformed audio', () => {
+test('supports signature-verified FLAC/AAC/AMR and rejects executable or malformed content', () => {
+  assert.equal(validation.validateBuffer(Buffer.from('fLaC'), 'audio/flac'), 'audio/flac');
+  assert.equal(validation.validateBuffer(Buffer.from([0xff, 0xf1, 0x50, 0x80]), 'audio/aac'), 'audio/aac');
+  assert.equal(validation.validateBuffer(Buffer.from('#!AMR\nvoice'), 'audio/amr'), 'audio/amr');
   assert.throws(
-    () => validation.validateBuffer(Buffer.from('fLaC'), 'audio/flac'),
+    () => validation.validateBuffer(Buffer.from('MZ executable'), 'audio/mpeg'),
     (error: unknown) => error instanceof AudioValidationError && error.code === 'UNSUPPORTED_AUDIO_TYPE',
   );
 });
@@ -151,6 +154,17 @@ test('preserves English transcription', async () => {
     100,
   ).transcribe({ ...prepared, sha256: 'english-hash' });
   assert.equal(result.language, 'en');
+});
+
+test('preserves unavailable provider confidence instead of inventing a score', async () => {
+  const service = new SpeechToTextService(
+    providerFor({ text: 'আমার XL লাগবে', language: 'bn', confidence: null, duration: 2 }),
+    0.6,
+    1_000,
+  );
+  const result = await service.transcribe({ ...prepared, sha256: 'no-confidence' });
+  assert.equal(result.confidence, null);
+  assert.equal(service.isLowConfidence(result), false);
 });
 
 test('recognizes low-confidence transcription', () => {

@@ -9,6 +9,9 @@ export const supportedAudioMimeTypes = [
   'audio/webm',
   'audio/mp4',
   'audio/m4a',
+  'audio/aac',
+  'audio/flac',
+  'audio/amr',
 ] as const;
 export type SupportedAudioMimeType = (typeof supportedAudioMimeTypes)[number];
 
@@ -42,7 +45,9 @@ export const transcriptionSchema = z
   .object({
     text: z.string().trim().min(1).max(10_000),
     language: z.enum(['bn', 'en', 'mixed', 'unknown']),
-    confidence: z.number().min(0).max(1),
+    // Some providers do not return calibrated confidence. Preserve that fact;
+    // never synthesize a score merely to satisfy the transport schema.
+    confidence: z.number().min(0).max(1).nullable(),
     duration: z.number().nonnegative().max(86_400).nullable(),
   })
   .strict();

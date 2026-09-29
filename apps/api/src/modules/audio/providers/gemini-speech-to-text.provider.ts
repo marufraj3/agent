@@ -8,7 +8,7 @@ export const TRANSCRIPTION_JSON_SCHEMA: Record<string, unknown> = {
   properties: {
     text: { type: 'string' },
     language: { type: 'string', enum: ['bn', 'en', 'mixed', 'unknown'] },
-    confidence: { type: 'number', minimum: 0, maximum: 1 },
+    confidence: { anyOf: [{ type: 'number', minimum: 0, maximum: 1 }, { type: 'null' }] },
     duration: { anyOf: [{ type: 'number', minimum: 0 }, { type: 'null' }] },
   },
   required: ['text', 'language', 'confidence', 'duration'],
@@ -52,7 +52,7 @@ export class GeminiSpeechToTextProvider implements SpeechToTextProvider {
     }
     const response = await this.gemini.transcribeAudio({
       systemInstruction: `You are a speech-to-text engine for Alzeena Fashion customer messages.
-Transcribe faithfully without translating. Support Bangla, English, Banglish, and mixed speech. Preserve product names, sizes, and spoken product-code letters/numbers as heard. Never answer the customer and never invent inaudible words. Return only structured JSON. Confidence must reflect transcription clarity.`,
+Transcribe faithfully without translating. Support Bangla, English, Banglish, and mixed speech. Preserve product names, sizes, and spoken product-code letters/numbers as heard. Never answer the customer and never invent inaudible words. Return only structured JSON. Set confidence to null unless the speech model itself provides a calibrated confidence score; never invent one.`,
       prompt: `Transcribe this audio exactly as spoken.
 Use language="bn" for primarily Bangla script, "en" for English, "mixed" for Bangla/Banglish plus English, and "unknown" when unclear.
 Return duration=${audio.duration ?? 'null'} when supplied; otherwise provide a best estimate or null.`,

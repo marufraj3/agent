@@ -37,10 +37,15 @@ type Metadata = {
   transcription?: {
     text?: string;
     language?: string;
-    confidence?: number;
+    confidence?: number | null;
     status?: string;
   };
   delivery?: { status?: string; provider?: string };
+  audioDebug?: {
+    inputType?: string; durationSeconds?: number | null; provider?: string; model?: string;
+    transcript?: string; sttDurationMs?: number; aiDurationMs?: number; totalDurationMs?: number;
+    estimatedCost?: number | null;
+  };
 };
 type Detail = Omit<Summary, "customer" | "messages" | "handovers"> & {
   customer: Summary["customer"] & {
@@ -56,6 +61,11 @@ type Detail = Omit<Summary, "customer" | "messages" | "handovers"> & {
     messageType: string;
     createdAt: string;
     metadata?: Metadata | null;
+    audioTranscription?: {
+      status: string; originalTranscript: string | null; normalizedTranscript: string | null;
+      language: string | null; confidence: number | null; durationSeconds: number | null;
+      provider: string | null; model: string | null; retainedUntil: string | null;
+    } | null;
   }>;
   handovers: Array<{
     id: string;
@@ -204,6 +214,20 @@ export default function InboxPage() {
       await Promise.all([loadList(), openConversation(selectedId)]);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "Action failed.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function retranscribe(messageId: string) {
+    if (!password || !selectedId) return;
+    setLoading(true);
+    setError("");
+    try {
+      await adminRequest(`/admin/messages/${messageId}/retranscribe`, password, { method: "POST", body: "{}" });
+      await openConversation(selectedId);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Re-transcription failed.");
     } finally {
       setLoading(false);
     }
@@ -507,13 +531,34 @@ export default function InboxPage() {
                       <p className="whitespace-pre-wrap leading-6">
                         {message.content}
                       </p>
-                      {message.metadata?.transcription?.text ? (
+                      {message.messageType === "AUDIO" ? (
                         <div className="mt-2 rounded-lg bg-white/10 p-2">
                           <p className="text-[10px] opacity-60">
-                            TRANSCRIPTION
+                            TRANSCRIPTION · {message.audioTranscription?.status ?? message.metadata?.transcription?.status ?? "UNKNOWN"}
+                            {message.audioTranscription?.language || message.metadata?.transcription?.language ? ` · ${message.audioTranscription?.language ?? message.metadata?.transcription?.language}` : ""}
+                            {typeof (message.audioTranscription?.durationSeconds ?? message.metadata?.audio?.duration) === "number" ? ` · ${(message.audioTranscription?.durationSeconds ?? message.metadata?.audio?.duration as number).toFixed(1)}s` : ""}
                           </p>
-                          <p>{message.metadata.transcription.text}</p>
+                          {message.audioTranscription?.originalTranscript || message.metadata?.transcription?.text ? <p>{message.audioTranscription?.originalTranscript ?? message.metadata?.transcription?.text}</p> : null}
+                          {message.metadata?.audio?.url ? (
+                            <button
+                              type="button"
+                              disabled={loading}
+                              onClick={() => void retranscribe(message.id)}
+                              className="mt-2 rounded-md border border-current px-2 py-1 text-[10px] font-semibold disabled:opacity-50"
+                            >
+                              Re-transcribe retained audio
+                            </button>
+                          ) : null}
                         </div>
+                      ) : null}
+                      {message.metadata?.audioDebug ? (
+                        <details className="mt-2 rounded-lg border border-current/20 p-2 text-[10px]">
+                          <summary className="cursor-pointer font-semibold">Voice debug</summary>
+                          <p className="mt-1">{message.metadata.audioDebug.inputType ?? "audio"} · {typeof message.metadata.audioDebug.durationSeconds === "number" ? `${message.metadata.audioDebug.durationSeconds}s` : "duration unknown"} · {message.metadata.audioDebug.provider ?? "provider unknown"}/{message.metadata.audioDebug.model ?? "model unknown"}</p>
+                          <p>STT {message.metadata.audioDebug.sttDurationMs ?? "—"}ms · AI {message.metadata.audioDebug.aiDurationMs ?? "—"}ms · total {message.metadata.audioDebug.totalDurationMs ?? "—"}ms</p>
+                          {message.metadata.audioDebug.transcript ? <p className="mt-1 whitespace-pre-wrap">{message.metadata.audioDebug.transcript}</p> : null}
+                          <p>Cost: {typeof message.metadata.audioDebug.estimatedCost === "number" ? message.metadata.audioDebug.estimatedCost : "unknown"}</p>
+                        </details>
                       ) : null}
                       <p className="mt-2 text-[10px] opacity-50">
                         {new Date(message.createdAt).toLocaleString()}

@@ -7,6 +7,7 @@ import { MessengerEventParser } from '../messenger.parser.js';
 import { enqueueMessengerEvent } from '../messenger.queue.js';
 import { verifyMessengerSignature } from '../messenger.signature.js';
 import type { NormalizedMessengerEvent } from '../messenger.types.js';
+import { AudioIngestionService, AudioRateLimitError } from '../../../audio/audio-ingestion.service.js';
 
 const requests = new Map<string, { minute: number; count: number }>();
 function enforceWebhookRate(request: FastifyRequest) {
@@ -19,7 +20,12 @@ function enforceWebhookRate(request: FastifyRequest) {
   }
 }
 
-async function registerEvent(app: FastifyInstance, event: NormalizedMessengerEvent, requestId?: string) {
+async function registerEvent(
+  app: FastifyInstance,
+  event: NormalizedMessengerEvent,
+  requestId?: string,
+  audioIngestion?: AudioIngestionService,
+) {
   const db = app.prisma as any;
   let log = await db.messengerEventLog.findUnique({ where: { externalEventId: event.externalEventId } });
   if (log && ['QUEUED', 'PROCESSING', 'PROCESSED', 'IGNORED'].includes(log.status)) return false;
@@ -42,7 +48,17 @@ async function registerEvent(app: FastifyInstance, event: NormalizedMessengerEve
     }
   }
   try {
-    await enqueueMessengerEvent(app.messengerEventQueue, { eventLogId: log.id, event, requestId });
+    if (event.messageType === 'audio' && audioIngestion) {
+      try {
+        await audioIngestion.ingest(event, log.id, requestId);
+      } catch (error) {
+        if (!(error instanceof AudioRateLimitError)) throw error;
+        // Customer-safe rate-limit replies are delivered by the normal Messenger worker.
+        await enqueueMessengerEvent(app.messengerEventQueue, { eventLogId: log.id, event, requestId });
+      }
+    } else {
+      await enqueueMessengerEvent(app.messengerEventQueue, { eventLogId: log.id, event, requestId });
+    }
     await db.messengerEventLog.update({ where: { id: log.id }, data: { status: 'QUEUED', errorMessage: null } });
     return true;
   } catch (error) {
@@ -57,6 +73,9 @@ async function registerEvent(app: FastifyInstance, event: NormalizedMessengerEve
 export async function messengerRoutes(app: FastifyInstance): Promise<void> {
   const config = getMessengerConfig();
   const parser = new MessengerEventParser();
+  const audioIngestion = app.audioTranscriptionQueue
+    ? new AudioIngestionService(app.prisma, app.audioTranscriptionQueue, app.redis, env.AUDIO_RATE_LIMIT_PER_MINUTE)
+    : undefined;
 
   app.removeContentTypeParser('application/json');
   app.addContentTypeParser('application/json', { parseAs: 'buffer' }, (request, body, done) => {
@@ -85,7 +104,7 @@ export async function messengerRoutes(app: FastifyInstance): Promise<void> {
     if (!payload || payload.object !== 'page') throw new AppError('Unsupported Facebook webhook object', 404, 'UNSUPPORTED_WEBHOOK');
     const events = parser.parse(payload, config.pageId);
     try {
-      await Promise.all(events.map((event) => registerEvent(app, event, request.id)));
+      await Promise.all(events.map((event) => registerEvent(app, event, request.id, audioIngestion)));
     } catch {
       return reply.code(503).send({ success: false, error: { code: 'MESSENGER_QUEUE_UNAVAILABLE', message: 'Event will be retried', requestId: request.id } });
     }

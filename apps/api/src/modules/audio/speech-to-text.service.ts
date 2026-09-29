@@ -59,6 +59,8 @@ export class SpeechToTextService {
   }
 
   isLowConfidence(transcription: Transcription): boolean {
-    return transcription.confidence < this.lowConfidenceThreshold;
+    return transcription.language === 'unknown' || (
+      transcription.confidence !== null && transcription.confidence < this.lowConfidenceThreshold
+    );
   }
 }

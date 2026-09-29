@@ -35,6 +35,11 @@ export class MessengerEventParser {
         const attachment = record(attachments[0]);
         const attachmentPayload = record(attachment?.payload);
         const attachmentType = typeof attachment?.type === 'string' ? attachment.type : 'unsupported';
+        const mimeType = typeof attachmentPayload?.mime_type === 'string'
+          ? attachmentPayload.mime_type.slice(0, 100).toLowerCase()
+          : typeof attachmentPayload?.content_type === 'string'
+            ? attachmentPayload.content_type.slice(0, 100).toLowerCase()
+            : undefined;
         const url = typeof attachmentPayload?.url === 'string' && /^https:\/\//i.test(attachmentPayload.url)
           ? attachmentPayload.url
           : undefined;
@@ -53,6 +58,7 @@ export class MessengerEventParser {
           text: messageType === 'unsupported' ? '[Unsupported Messenger attachment]' : '',
           attachmentUrl: url,
           attachmentType,
+          ...(mimeType ? { mimeType } : {}),
         });
       }
     }

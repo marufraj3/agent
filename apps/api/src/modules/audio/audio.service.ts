@@ -1,4 +1,9 @@
 import { createHash } from 'node:crypto';
+import { execFile } from 'node:child_process';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { promisify } from 'node:util';
 import { PublicUrlService, UnsafePublicUrlError, type ResolveHost } from '../media/public-url.service.js';
 import type { AudioInput, PreparedAudio, SupportedAudioMimeType } from './audio.types.js';
 import {
@@ -8,6 +13,7 @@ import {
 } from './audio-validation.service.js';
 
 type FetchLike = typeof fetch;
+const execFileAsync = promisify(execFile);
 interface CacheEntry {
   expiresAt: number;
   audio: PreparedAudio;
@@ -39,7 +45,8 @@ export class AudioService {
 
     const url = input.url!;
     const cacheKey = `${url}|${input.mimeType ?? ''}`;
-    const cached = this.urlCache.get(cacheKey);
+    const cacheable = input.source !== 'messenger';
+    const cached = cacheable ? this.urlCache.get(cacheKey) : undefined;
     if (cached && cached.expiresAt > Date.now()) {
       return {
         ...cached.audio,
@@ -49,12 +56,14 @@ export class AudioService {
     }
 
     const audio = await this.download(url, input.mimeType, input.source, input.duration);
-    if (this.urlCache.size >= 10) this.urlCache.delete(this.urlCache.keys().next().value ?? '');
-    this.urlCache.set(cacheKey, { audio, expiresAt: Date.now() + 5 * 60_000 });
+    if (cacheable) {
+      if (this.urlCache.size >= 10) this.urlCache.delete(this.urlCache.keys().next().value ?? '');
+      this.urlCache.set(cacheKey, { audio, expiresAt: Date.now() + 5 * 60_000 });
+    }
     return audio;
   }
 
-  private prepareInline(input: AudioInput): PreparedAudio {
+  private async prepareInline(input: AudioInput): Promise<PreparedAudio> {
     if (!input.mimeType) {
       throw new AudioValidationError('mimeType is required for inline audio data', 'INVALID_AUDIO');
     }
@@ -91,7 +100,7 @@ export class AudioService {
           method: 'GET',
           redirect: 'manual',
           signal: controller.signal,
-          headers: { accept: 'audio/ogg,audio/mpeg,audio/wav,audio/webm,audio/mp4' },
+          headers: { accept: 'audio/ogg,audio/mpeg,audio/wav,audio/webm,audio/mp4,audio/aac,audio/flac,audio/amr' },
         });
         if (response.status >= 300 && response.status < 400) {
           const location = response.headers.get('location');
@@ -151,13 +160,13 @@ export class AudioService {
     return Buffer.concat(chunks, total);
   }
 
-  private toPrepared(
+  private async toPrepared(
     data: Buffer,
     mimeType: SupportedAudioMimeType,
     source: string,
     declaredDuration?: number,
-  ): PreparedAudio {
-    const detectedDuration = detectAudioDuration(data, mimeType);
+  ): Promise<PreparedAudio> {
+    const detectedDuration = detectAudioDuration(data, mimeType) ?? await this.probeDuration(data);
     const duration = detectedDuration ?? declaredDuration ?? null;
     this.validation.validateDuration(duration);
     return {
@@ -170,6 +179,30 @@ export class AudioService {
       source,
       temporary: true,
     };
+  }
+
+  /**
+   * Probe containers whose duration cannot be read safely from their first frames.
+   * The random server-owned path is deleted in finally and is never returned or logged.
+   * If ffprobe is unavailable, provider-supported originals continue without conversion.
+   */
+  private async probeDuration(data: Buffer): Promise<number | null> {
+    let directory: string | undefined;
+    try {
+      directory = await mkdtemp(join(tmpdir(), 'alzeena-audio-'));
+      const file = join(directory, 'input.audio');
+      await writeFile(file, data, { mode: 0o600 });
+      const { stdout } = await execFileAsync('ffprobe', [
+        '-v', 'error', '-show_entries', 'format=duration',
+        '-of', 'default=noprint_wrappers=1:nokey=1', file,
+      ], { timeout: Math.min(this.timeoutMs, 10_000), maxBuffer: 16 * 1024 });
+      const duration = Number(stdout.trim());
+      return Number.isFinite(duration) && duration > 0 ? Number(duration.toFixed(3)) : null;
+    } catch {
+      return null;
+    } finally {
+      if (directory) await rm(directory, { recursive: true, force: true }).catch(() => undefined);
+    }
   }
 }
 
