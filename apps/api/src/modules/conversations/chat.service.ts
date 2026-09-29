@@ -5,6 +5,8 @@ import { transcriptionSchema, type AudioInput, type Transcription } from '../aud
 import type { VoiceUnderstandingService } from '../audio/voice-understanding.service.js';
 import type { ImageProductService } from '../images/image-product.service.js';
 import type { ImageInput } from '../images/image.types.js';
+import type { HumanHandoverService } from '../handovers/human-handover.service.js';
+import type { HandoverReasonName } from '../handovers/handover.types.js';
 import type { OrderConversationService } from '../orders/order-conversation.service.js';
 import { ProductCatalogService } from '../products/product-catalog.service.js';
 import type { ConversationChannelName } from './conversation.types.js';
@@ -77,6 +79,8 @@ export class ChatService {
     private readonly imageProducts?: ImageProductService,
     private readonly voice?: VoiceUnderstandingService,
     private readonly orderConversation?: OrderConversationService,
+    private readonly handovers?: HumanHandoverService,
+    private readonly maxConsecutiveFailures = 2,
   ) {
     this.customers = new CustomerService(prisma);
     this.conversations = new ConversationService(prisma);
@@ -93,15 +97,23 @@ export class ChatService {
     let conversation;
 
     if (input.newConversation) {
-      const active = await this.conversations.getActiveConversation(customer.id, input.channel);
-      if (active) await this.conversations.closeConversation(active.id);
-      conversation = await this.conversations.createConversation({
-        customerId: customer.id,
-        channel: input.channel,
-      });
+      const engaged = await this.conversations.getEngagedConversation(customer.id, input.channel);
+      if (engaged?.status === 'HUMAN') {
+        conversation = engaged;
+      } else {
+        if (engaged) await this.conversations.closeConversation(engaged.id);
+        conversation = await this.conversations.createConversation({
+          customerId: customer.id,
+          channel: input.channel,
+        });
+      }
     } else if (input.conversationId) {
       const requested = await this.conversations.getConversation(input.conversationId);
-      if (!requested || requested.customerId !== customer.id || requested.status !== 'ACTIVE') {
+      if (
+        !requested ||
+        requested.customerId !== customer.id ||
+        !['ACTIVE', 'HUMAN'].includes(requested.status)
+      ) {
         throw new ConversationAccessError('Conversation is unavailable for this customer');
       }
       conversation = requested;
@@ -114,6 +126,44 @@ export class ChatService {
 
     const additionalText = input.message?.trim() || input.image?.caption?.trim() || '';
     const initialContent = additionalText || (input.audio ? '[Voice message]' : 'Which product is shown in this image?');
+
+    if (conversation.status === 'HUMAN') {
+      const message = await this.messages.addMessage({
+        conversationId: conversation.id,
+        customerId: customer.id,
+        role: 'user',
+        content: initialContent,
+        messageType: input.audio ? 'audio' : input.image ? 'image' : 'text',
+        ...(input.image || input.audio
+          ? {
+              metadata: {
+                humanLock: true,
+                ...(input.image
+                  ? { image: { source: input.image.source ?? 'unknown', url: null } }
+                  : {}),
+                ...(input.audio
+                  ? { audio: { source: input.audio.source ?? 'unknown', url: null } }
+                  : {}),
+              },
+            }
+          : {}),
+      });
+      return {
+        conversationId: conversation.id,
+        customerId: customer.id,
+        conversationStatus: 'human' as const,
+        reply: null,
+        intent: 'human_request' as const,
+        confidence: 1,
+        requiresHuman: true,
+        action: 'human_locked',
+        productIds: [],
+        products: [],
+        source: 'rules' as const,
+        messageSaved: true,
+        messageId: message.id,
+      };
+    }
     const imageResult = input.image
       ? await this.imageProducts?.identify(input.image, initialContent)
       : undefined;
@@ -253,6 +303,36 @@ export class ChatService {
       }
     }
 
+    let handoverReason: HandoverReasonName | undefined;
+    if (response.requiresHuman) {
+      handoverReason = this.handoverReason(response);
+      await (this.prisma as any).conversation.update({
+        where: { id: conversation.id },
+        data: { consecutiveAiFailures: 0 },
+      });
+    } else if (this.isFailureResponse(response)) {
+      const failures = ((conversation as typeof conversation & { consecutiveAiFailures?: number })
+        .consecutiveAiFailures ?? 0) + 1;
+      await (this.prisma as any).conversation.update({
+        where: { id: conversation.id },
+        data: { consecutiveAiFailures: failures },
+      });
+      if (failures >= this.maxConsecutiveFailures) {
+        response = {
+          ...response,
+          reply: 'ঠিক আছে ভাই, একজন টিম মেম্বার আপনার সাথে কথা বলবেন। একটু সময় দিন।',
+          requiresHuman: true,
+          action: 'request_human',
+        };
+        handoverReason = 'repeated_failure';
+      }
+    } else {
+      await (this.prisma as any).conversation.update({
+        where: { id: conversation.id },
+        data: { consecutiveAiFailures: 0 },
+      });
+    }
+
     await this.messages.addMessage({
       conversationId: conversation.id,
       customerId: customer.id,
@@ -280,7 +360,16 @@ export class ChatService {
       },
     });
     if (response.requiresHuman) {
-      await this.conversations.markConversationHuman(conversation.id);
+      if (this.handovers && handoverReason) {
+        await this.handovers.requestHandover({
+          conversationId: conversation.id,
+          reason: handoverReason,
+          note: response.action ? `AI action: ${response.action}` : null,
+          createdBy: 'ai',
+        });
+      } else {
+        await this.conversations.markConversationHuman(conversation.id);
+      }
     }
 
     return {
@@ -297,6 +386,23 @@ export class ChatService {
       ...(imageResult ? { imageRecognition: imageResult } : {}),
       ...(transcription ? { transcription } : {}),
     };
+  }
+
+  private isFailureResponse(response: AIResponse): boolean {
+    return (
+      response.intent === 'unknown' ||
+      response.confidence < 0.45 ||
+      response.source === 'fallback' ||
+      ['request_product_clarification', 'request_voice_clarification'].includes(response.action ?? '')
+    );
+  }
+
+  private handoverReason(response: AIResponse): HandoverReasonName {
+    if (response.intent === 'human_request') return 'customer_requested_human';
+    if (response.intent === 'order_intent') return 'order_problem';
+    if (response.action === 'request_product_clarification') return 'unavailable_product';
+    if (response.source === 'fallback' || response.confidence < 0.45) return 'ai_uncertain';
+    return 'complex_question';
   }
 
   private async findReusableTranscription(

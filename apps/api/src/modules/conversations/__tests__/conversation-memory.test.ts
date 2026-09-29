@@ -462,3 +462,31 @@ test('persistent chat passes prior history and product metadata to the existing 
     'Messi Polo 990 টাকা।',
   ]);
 });
+
+test('AI lock saves customer messages but does not call AI while conversation is human', async () => {
+  const memory = createMemoryPrisma();
+  const customer = await new CustomerService(memory.prisma).findOrCreateCustomer({ platform: 'test', platformUserId: 'human-lock', name: 'Rahim' });
+  const conversation = await new ConversationService(memory.prisma).createConversation({ customerId: customer.id, channel: 'test' });
+  await new ConversationService(memory.prisma).markConversationHuman(conversation.id);
+  const ai = new CapturingAI();
+  const result = await new ChatService(memory.prisma, ai as unknown as AIService, 20, 5).send({
+    customer: { platform: 'test', platformUserId: 'human-lock' }, channel: 'test', conversationId: conversation.id, message: 'আরও একটি প্রশ্ন',
+  });
+  assert.equal(ai.inputs.length, 0); assert.equal(result.reply, null); assert.equal(result.conversationStatus, 'human');
+  assert.equal(memory.messages.filter((message) => message.role === 'USER').length, 1);
+  assert.equal(memory.messages.filter((message) => message.role === 'ASSISTANT').length, 0);
+  assert.equal(memory.conversations[0].unreadForAdmin, true);
+});
+
+test('AI responds to the next customer message after admin returns conversation to active', async () => {
+  const memory = createMemoryPrisma();
+  const customer = await new CustomerService(memory.prisma).findOrCreateCustomer({ platform: 'test', platformUserId: 'return-ai', name: 'Rahim' });
+  const conversation = await new ConversationService(memory.prisma).createConversation({ customerId: customer.id, channel: 'test' });
+  await new ConversationService(memory.prisma).markConversationHuman(conversation.id);
+  await memory.prisma.conversation.update({ where: { id: conversation.id }, data: { status: 'ACTIVE' } });
+  const ai = new CapturingAI();
+  const result = await new ChatService(memory.prisma, ai as unknown as AIService, 20, 5).send({
+    customer: { platform: 'test', platformUserId: 'return-ai' }, channel: 'test', conversationId: conversation.id, message: 'দাম কত?',
+  });
+  assert.equal(ai.inputs.length, 1); assert.equal(result.conversationStatus, 'active'); assert.equal(typeof result.reply, 'string');
+});

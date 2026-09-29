@@ -32,9 +32,12 @@ export class MessageService {
           ...(input.metadata !== undefined ? { metadata: input.metadata } : {}),
         },
       });
-      await transaction.conversation.update({
+      await (transaction as any).conversation.update({
         where: { id: input.conversationId },
-        data: { lastMessageAt: now },
+        data: {
+          lastMessageAt: now,
+          ...(input.role === 'user' ? { unreadForAdmin: true } : {}),
+        },
       });
       return message;
     });

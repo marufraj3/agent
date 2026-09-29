@@ -39,6 +39,8 @@ const envSchema = z.object({
   AI_MAX_HISTORY_MESSAGES: z.coerce.number().int().min(0).max(20).default(8),
   AI_MAX_PRODUCTS: z.coerce.number().int().min(1).max(10).default(5),
   AI_TEST_RATE_LIMIT_PER_MINUTE: z.coerce.number().int().min(1).max(300).default(30),
+  AI_MAX_CONSECUTIVE_FAILURES: z.coerce.number().int().min(1).max(10).default(2),
+  INBOX_PAGE_SIZE: z.coerce.number().int().min(10).max(100).default(25),
   CONVERSATION_HISTORY_LIMIT: z.coerce.number().int().min(1).max(100).default(20),
   MAX_IMAGE_SIZE_MB: z.coerce.number().positive().max(25).default(10),
   IMAGE_REQUEST_TIMEOUT_MS: z.coerce.number().int().min(1_000).max(60_000).default(15_000),

@@ -9,6 +9,7 @@ import { AudioFetchError } from '../../audio/audio.service.js';
 import { AudioValidationError } from '../../audio/audio-validation.service.js';
 import { createImageProductService } from '../../images/image.factory.js';
 import { ImageFetchError } from '../../images/image.service.js';
+import { HumanHandoverService } from '../../handovers/human-handover.service.js';
 import { OrderConversationService } from '../../orders/order-conversation.service.js';
 import { OrderService } from '../../orders/order.service.js';
 import { OrderEngineError } from '../../orders/order.types.js';
@@ -33,6 +34,8 @@ export async function chatRoutes(app: FastifyInstance): Promise<void> {
         app.log,
       ),
     ),
+    new HumanHandoverService(app.prisma),
+    env.AI_MAX_CONSECUTIVE_FAILURES,
   );
 
   app.post(

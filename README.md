@@ -1,8 +1,8 @@
 # Alzeena Fashion Sales Agent
 
-Production-oriented foundation for the Alzeena Fashion AI sales agent. The repository currently contains **Steps 1–9**: the web application, API, infrastructure configuration, PostgreSQL/Prisma data layer, product-feed synchronization, protected Knowledge Base/business settings management, the modular Gemini-backed AI core, persistent conversation memory, product photo recognition, voice-message understanding, and the backend-controlled Order Engine with Alzeena Website Order API integration.
+Production-oriented foundation for the Alzeena Fashion AI sales agent. The repository currently contains **Steps 1–10**: the web application, API, infrastructure configuration, PostgreSQL/Prisma data layer, product synchronization, protected business administration, the modular Gemini-backed AI core, persistent multimodal conversation memory, the deterministic Order Engine, and a human-handover Admin Inbox.
 
-Step 9 adds deterministic order drafts, current-catalogue validation, explicit confirmation, submission concurrency protection, safe external-outcome handling, and protected order administration. It does not add Facebook/Meta transport, voice replies, a human inbox, courier workflows, payments, refunds, analytics, or marketing automation.
+Step 10 adds structured handovers, an enforced AI/human ownership lock, assignment, unread state, internal notifications, local outbound-delivery abstraction, searchable conversation context, and protected human replies. It does not add Facebook/Meta transport, webhooks, WhatsApp, voice replies, browser push, WebSockets, payments, or analytics.
 
 ## Architecture
 
@@ -321,6 +321,44 @@ npm run prisma:generate
 ```
 
 Configure delivery charges, Website API base URL, page ID, delivery-company ID, UTM source, and UTM campaign through protected Business Settings. `ORDER_API_TIMEOUT_MS` is environment-controlled. No API credential or customer password is logged; the normalized customer phone is sent as the website API password only because that external contract requires it.
+
+## Step 10 Human Handover and Admin Inbox
+
+The backend owns handover decisions. An AI response with `requiresHuman: true`, or the configured number of consecutive uncertain responses, creates a structured `ConversationHandover`, changes the conversation to `human`, and creates an internal admin notification. While human-owned, customer messages are persisted and marked unread, but Gemini, image recognition, voice transcription, and automatic AI replies are not invoked.
+
+The protected responsive inbox is available at:
+
+```text
+http://localhost:3000/admin/inbox
+```
+
+It provides database-backed search, pagination, pending/assigned/active/closed filters, customer context, text/image/voice history, transcription, current product facts, related orders, handover details, assignment, local human replies, return-to-AI, close, and reopen actions. It uses the existing `x-admin-password` authentication and the single local actor identity `admin`; no second authentication system was introduced.
+
+Protected APIs:
+
+```text
+GET  /api/admin/inbox
+GET  /api/admin/conversations/:id
+POST /api/admin/conversations/:id/messages
+POST /api/admin/conversations/:id/take
+POST /api/admin/conversations/:id/assign
+POST /api/admin/conversations/:id/release
+POST /api/admin/conversations/:id/return-to-ai
+POST /api/admin/conversations/:id/close
+POST /api/admin/conversations/:id/reopen
+POST /api/admin/conversations/:id/handover
+GET  /api/admin/handovers
+POST /api/admin/handovers/:id/resolve
+```
+
+`MessageDeliveryService` isolates outbound delivery from the inbox. Step 10 uses only `TestMessageDeliveryProvider`, which records a local successful delivery result in human-message metadata. No Messenger or WhatsApp request is made. A later channel provider can implement the same interface.
+
+Set `AI_MAX_CONSECUTIVE_FAILURES` (default `2`) and `INBOX_PAGE_SIZE` (default `25`) if the defaults need adjustment. Apply `20260929223000_human_handover_inbox` and regenerate Prisma Client before starting:
+
+```bash
+npm run db:migrate:deploy
+npm run prisma:generate
+```
 
 ## Prerequisites
 

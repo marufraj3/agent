@@ -194,15 +194,22 @@ model Conversation {
   customerId    String             @map("customer_id") @db.Uuid
   channel       ConversationChannel
   status        ConversationStatus @default(ACTIVE)
-  title         String?            @db.VarChar(255)
-  lastMessageAt DateTime           @default(now()) @map("last_message_at")
+  title                 String?            @db.VarChar(255)
+  assignedTo            String?            @map("assigned_to") @db.VarChar(100)
+  unreadForAdmin        Boolean            @default(false) @map("unread_for_admin")
+  consecutiveAiFailures Int                @default(0) @map("consecutive_ai_failures")
+  lastMessageAt         DateTime           @default(now()) @map("last_message_at")
   createdAt     DateTime           @default(now()) @map("created_at")
   updatedAt     DateTime           @updatedAt @map("updated_at")
   customer      Customer           @relation(fields: [customerId], references: [id], onDelete: Cascade)
   messages      Message[]
   orders        Order[]
+  handovers     ConversationHandover[]
+  notifications AdminNotification[]
 
   @@index([customerId, status, lastMessageAt])
+  @@index([status, assignedTo, lastMessageAt])
+  @@index([unreadForAdmin, lastMessageAt])
   @@index([channel, status, lastMessageAt])
   @@index([lastMessageAt])
   @@map("conversations")
@@ -224,6 +231,64 @@ model Message {
   @@index([customerId, createdAt])
   @@index([createdAt])
   @@map("messages")
+}
+
+enum HandoverReason {
+  CUSTOMER_REQUESTED_HUMAN @map("customer_requested_human")
+  AI_UNCERTAIN             @map("ai_uncertain")
+  REPEATED_FAILURE         @map("repeated_failure")
+  COMPLAINT                @map("complaint")
+  REFUND_REQUEST           @map("refund_request")
+  EXCHANGE_REQUEST         @map("exchange_request")
+  ORDER_PROBLEM            @map("order_problem")
+  PAYMENT_PROBLEM          @map("payment_problem")
+  UNAVAILABLE_PRODUCT      @map("unavailable_product")
+  COMPLEX_QUESTION         @map("complex_question")
+  ABUSIVE_CUSTOMER         @map("abusive_customer")
+  OTHER                    @map("other")
+}
+
+enum HandoverStatus {
+  PENDING   @map("pending")
+  ASSIGNED  @map("assigned")
+  RESOLVED  @map("resolved")
+  CANCELLED @map("cancelled")
+}
+
+model ConversationHandover {
+  id             String           @id @default(uuid()) @db.Uuid
+  conversationId String           @map("conversation_id") @db.Uuid
+  reason         HandoverReason
+  note           String?          @db.Text
+  status         HandoverStatus   @default(PENDING)
+  assignedTo     String?          @map("assigned_to") @db.VarChar(100)
+  createdBy      String           @map("created_by") @db.VarChar(100)
+  createdAt      DateTime         @default(now()) @map("created_at")
+  resolvedAt     DateTime?        @map("resolved_at")
+  resolvedBy     String?          @map("resolved_by") @db.VarChar(100)
+  conversation   Conversation     @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  notifications  AdminNotification[]
+
+  @@index([status, createdAt])
+  @@index([assignedTo, status, createdAt])
+  @@index([conversationId, createdAt])
+  @@map("conversation_handovers")
+}
+
+model AdminNotification {
+  id             String                @id @default(uuid()) @db.Uuid
+  conversationId String                @map("conversation_id") @db.Uuid
+  handoverId     String?               @map("handover_id") @db.Uuid
+  type           String                @db.VarChar(100)
+  message        String                @db.VarChar(500)
+  readAt         DateTime?             @map("read_at")
+  createdAt      DateTime              @default(now()) @map("created_at")
+  conversation   Conversation          @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  handover       ConversationHandover? @relation(fields: [handoverId], references: [id], onDelete: SetNull)
+
+  @@index([readAt, createdAt])
+  @@index([conversationId, createdAt])
+  @@map("admin_notifications")
 }
 
 enum OrderStatus {

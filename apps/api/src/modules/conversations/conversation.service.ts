@@ -38,8 +38,17 @@ export class ConversationService {
     });
   }
 
+  async getEngagedConversation(customerId: string, channel: ConversationChannelName) {
+    const active = await this.getActiveConversation(customerId, channel);
+    if (active) return active;
+    return this.prisma.conversation.findFirst({
+      where: { customerId, channel: channelToPrisma[channel], status: 'HUMAN' },
+      orderBy: { lastMessageAt: 'desc' },
+    });
+  }
+
   async getOrCreateConversation(input: CreateConversationInput) {
-    const active = await this.getActiveConversation(input.customerId, input.channel);
+    const active = await this.getEngagedConversation(input.customerId, input.channel);
     if (active) return active;
 
     try {
@@ -48,7 +57,7 @@ export class ConversationService {
       if (!(error instanceof Prisma.PrismaClientKnownRequestError) || error.code !== 'P2002') {
         throw error;
       }
-      const concurrent = await this.getActiveConversation(input.customerId, input.channel);
+      const concurrent = await this.getEngagedConversation(input.customerId, input.channel);
       if (!concurrent) throw error;
       return concurrent;
     }

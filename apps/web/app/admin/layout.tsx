@@ -20,6 +20,7 @@ export default function AdminLayout({ children }: Readonly<{ children: React.Rea
               ['Settings', '/admin/settings'],
               ['AI Test', '/admin/ai-test'],
               ['Customers', '/admin/customers'],
+              ['Inbox', '/admin/inbox'],
               ['Conversations', '/admin/conversations'],
               ['Orders', '/admin/orders'],
             ] as const).map(([label, href]) => (

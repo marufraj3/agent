@@ -1,6 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import { AppError } from '../../../errors/app-error.js';
 import { requireAdmin } from '../../admin/auth/require-admin.js';
+import { AdminInboxService } from '../../inbox/admin-inbox.service.js';
 import { listQuerySchema } from '../conversation.schemas.js';
 import { channelToPrisma, statusToPrisma } from '../conversation.types.js';
 
@@ -11,6 +12,7 @@ function parseListQuery(query: unknown) {
 }
 
 export async function conversationAdminRoutes(app: FastifyInstance): Promise<void> {
+  const inbox = new AdminInboxService(app.prisma);
   app.get('/api/admin/conversations', { preHandler: requireAdmin }, async (request) => {
     const query = parseListQuery(request.query);
     const where = {
@@ -37,16 +39,14 @@ export async function conversationAdminRoutes(app: FastifyInstance): Promise<voi
     '/api/admin/conversations/:id',
     { preHandler: requireAdmin },
     async (request) => {
-      const conversation = await app.prisma.conversation.findUnique({
-        where: { id: request.params.id },
-        include: {
-          customer: true,
-          messages: { orderBy: [{ createdAt: 'asc' }, { id: 'asc' }], take: 5_000 },
-          _count: { select: { messages: true } },
-        },
-      });
-      if (!conversation) throw new AppError('Conversation not found', 404, 'CONVERSATION_NOT_FOUND');
-      return { success: true, data: conversation };
+      try {
+        return { success: true, data: await inbox.getConversation(request.params.id) };
+      } catch (error) {
+        if (error instanceof Error && error.name === 'InboxError') {
+          throw new AppError(error.message, 404, 'CONVERSATION_NOT_FOUND');
+        }
+        throw error;
+      }
     },
   );
 
