@@ -1,5 +1,10 @@
 import { GoogleGenAI } from '@google/genai';
-import type { AIProvider, AIProviderRequest, AIProviderResponse } from './ai-provider.js';
+import type {
+  AIImageProviderRequest,
+  AIProvider,
+  AIProviderRequest,
+  AIProviderResponse,
+} from './ai-provider.js';
 
 export interface GeminiProviderConfig {
   apiKey: string;
@@ -35,6 +40,38 @@ export class GeminiProvider implements AIProvider {
 
     const text = response.text?.trim();
     if (!text) throw new Error('Gemini returned an empty response');
+    return { text, model: this.config.model };
+  }
+
+  async analyzeImage(request: AIImageProviderRequest): Promise<AIProviderResponse> {
+    const response = await this.client.models.generateContent({
+      model: this.config.model,
+      contents: [
+        {
+          role: 'user',
+          parts: [
+            { text: request.prompt },
+            {
+              inlineData: {
+                data: request.image.data,
+                mimeType: request.image.mimeType,
+              },
+            },
+          ],
+        },
+      ],
+      config: {
+        systemInstruction: request.systemInstruction,
+        responseMimeType: 'application/json',
+        responseJsonSchema: request.responseJsonSchema,
+        temperature: 0,
+        maxOutputTokens: this.config.maxOutputTokens,
+        httpOptions: { timeout: this.config.timeoutMs },
+      },
+    });
+
+    const text = response.text?.trim();
+    if (!text) throw new Error('Gemini returned an empty image analysis response');
     return { text, model: this.config.model };
   }
 }

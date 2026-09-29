@@ -33,6 +33,7 @@ export interface CatalogSearchProduct {
   productName: string;
   productCode: string;
   slug: string;
+  productDetails: string | null;
   productStatus: string;
   active: boolean;
   sellPrice: string;
@@ -81,6 +82,7 @@ function toCatalogProduct(product: ProductWithVariations): CatalogSearchProduct 
     productName: product.productName,
     productCode: product.productCode,
     slug: product.slug,
+    productDetails: product.productDetails,
     productStatus: product.productStatus,
     active: isKnownActiveProductStatus(product.productStatus),
     sellPrice: product.sellPrice.toFixed(2),
@@ -151,6 +153,10 @@ export class ProductCatalogService {
           { productName: { contains: normalizedQuery, mode: 'insensitive' } },
           { productCode: { contains: normalizedQuery, mode: 'insensitive' } },
           { slug: { contains: normalizedQuery, mode: 'insensitive' } },
+          { productDetails: { contains: normalizedQuery, mode: 'insensitive' } },
+          { colorName: { contains: normalizedQuery, mode: 'insensitive' } },
+          { categoryName: { contains: normalizedQuery, mode: 'insensitive' } },
+          { subCategoryName: { contains: normalizedQuery, mode: 'insensitive' } },
         ],
       },
       include: {

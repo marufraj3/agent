@@ -1,8 +1,8 @@
 # Alzeena Fashion Sales Agent
 
-Production-oriented foundation for the future Alzeena Fashion AI sales agent. The repository currently contains **Steps 1–6**: the web application, API, infrastructure configuration, PostgreSQL/Prisma data layer, product-feed synchronization, protected Knowledge Base/business settings management, the modular Gemini-backed AI core, and persistent customer/conversation memory.
+Production-oriented foundation for the future Alzeena Fashion AI sales agent. The repository currently contains **Steps 1–7**: the web application, API, infrastructure configuration, PostgreSQL/Prisma data layer, product-feed synchronization, protected Knowledge Base/business settings management, the modular Gemini-backed AI core, persistent customer/conversation memory, and product photo recognition.
 
-Step 6 adds channel-neutral customer identities, bounded conversation history, product-reference memory, a persistent protected chat flow, and basic customer/conversation administration. It does not add Facebook/Meta transport, orders, image/voice processing, a human inbox, analytics, or marketing automation.
+Step 7 adds validated JPEG/PNG/WebP input, protected image fetching, structured Gemini Vision clue extraction, deterministic local-catalogue matching, image-aware chat, and product memory. It does not add Facebook/Meta transport, orders, voice processing, a human inbox, analytics, or marketing automation.
 
 ## Architecture
 
@@ -205,6 +205,45 @@ Send the same identity again to reuse its active conversation, or set `"newConve
 
 Admin pages are available at `/admin/ai-test`, `/admin/customers`, and `/admin/conversations`. The AI test page shows the conversation ID, history, intent, confidence, and handover state, and can explicitly begin a new conversation.
 
+## Step 7 product photo recognition
+
+The image pipeline remains channel-neutral:
+
+```text
+image URL or inline upload → signature/size/MIME validation → safe bounded fetch
+                           → exact caption-code lookup when possible
+                           → Gemini Vision clue extraction when needed
+                           → deterministic local Product DB matching
+                           → current local price/stock/size/pre-order facts
+                           → existing AIService and conversation memory
+```
+
+Supported formats are JPEG, PNG, and WebP. Images are held only in bounded in-memory buffers and are not permanently stored. Public URL fetching rejects credentials, private/reserved addresses, unsafe ports, unsupported content, oversized streams, and excessive redirects. Inline base64 input supports the admin upload console. Repeated URLs and image hashes are cached briefly in-process to avoid unnecessary downloads and Vision calls.
+
+Gemini extracts visible clues such as names, codes, colors, text, designs, sizes, and observed price text. An observed image price is never treated as current. Product selection and all commerce facts come from the synchronized local PostgreSQL catalogue. High-confidence matches are selected, medium-confidence candidates trigger clarification where necessary, and low-confidence results do not guess.
+
+Protected image endpoint:
+
+```text
+POST /api/ai/analyze-image
+```
+
+Example URL analysis:
+
+```bash
+curl -X POST http://localhost:4000/api/ai/analyze-image \
+  -H "content-type: application/json" \
+  -H "x-admin-password: $ADMIN_PASSWORD" \
+  --data '{
+    "imageUrl":"https://example.com/product.webp",
+    "caption":"এটার দাম কত?"
+  }'
+```
+
+`POST /api/ai/chat` also accepts an `image` object with either `url` or base64 `data`, optional `mimeType`, and a channel-neutral `source`. Identified product IDs and compact match metadata are stored on the image message, allowing later questions such as “এইটার XL আছে?” to resolve without relying on model memory. The `/admin/ai-test` page supports image upload, URL input, preview, match reasons, current price, sizes, stock, and follow-up conversation testing.
+
+No database migration is required for Step 7 because the Step 6 `MessageType.IMAGE` and JSON metadata fields already support image messages. Configure `GEMINI_API_KEY`, apply existing migrations, and synchronize the local product catalogue before end-to-end visual testing. Exact product codes in captions can still resolve without a Vision call.
+
 ## Prerequisites
 
 - Node.js 20.9 or newer (Node.js 22 LTS recommended)
@@ -346,8 +385,12 @@ Run the compiled backend with `npm run start --workspace=@alzeena/api`. Run the 
 | `GEMINI_TIMEOUT_MS` | Gemini request timeout | Used by AI provider |
 | `AI_MAX_HISTORY_MESSAGES` | Recent caller-provided messages sent to the model | Used |
 | `AI_MAX_PRODUCTS` | Maximum relevant local products in model context | Used |
-| `AI_TEST_RATE_LIMIT_PER_MINUTE` | Per-process test endpoint limit | Used |
+| `AI_TEST_RATE_LIMIT_PER_MINUTE` | Per-process protected AI endpoint rate limit | Used |
 | `CONVERSATION_HISTORY_LIMIT` | Maximum recent persisted messages loaded into memory | Used |
+| `MAX_IMAGE_SIZE_MB` | Maximum downloaded or uploaded image size | Used |
+| `IMAGE_REQUEST_TIMEOUT_MS` | Timeout for public image URL downloads | Used |
+| `IMAGE_MATCH_HIGH_THRESHOLD` | Automatic product-selection confidence threshold | Used |
+| `IMAGE_MATCH_MEDIUM_THRESHOLD` | Candidate/clarification confidence threshold | Used |
 | `META_PAGE_ACCESS_TOKEN` | Future Meta integration | Reserved |
 | `META_APP_SECRET` | Future Meta integration | Reserved |
 | `META_VERIFY_TOKEN` | Future webhook verification | Reserved |

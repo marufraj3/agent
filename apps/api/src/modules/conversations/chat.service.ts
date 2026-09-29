@@ -1,5 +1,7 @@
 import type { PrismaClient } from '@alzeena/database';
 import type { AIService } from '../ai/ai.service.js';
+import type { ImageProductService } from '../images/image-product.service.js';
+import type { ImageInput } from '../images/image.types.js';
 import { ProductCatalogService } from '../products/product-catalog.service.js';
 import type { ConversationChannelName } from './conversation.types.js';
 import { ConversationContextService } from './conversation-context.service.js';
@@ -12,7 +14,8 @@ export interface ChatInput {
     platform: string;
     platformUserId: string;
   };
-  message: string;
+  message?: string;
+  image?: ImageInput;
   channel: ConversationChannelName;
   conversationId?: string;
   newConversation?: boolean;
@@ -36,6 +39,7 @@ export class ChatService {
     private readonly ai: AIService,
     historyLimit: number,
     private readonly maxProductIds: number,
+    private readonly imageProducts?: ImageProductService,
   ) {
     this.customers = new CustomerService(prisma);
     this.conversations = new ConversationService(prisma);
@@ -71,11 +75,38 @@ export class ChatService {
       });
     }
 
+    const customerMessage =
+      input.message?.trim() || input.image?.caption?.trim() || 'Which product is shown in this image?';
+    const imageResult = input.image
+      ? await this.imageProducts?.identify(input.image, customerMessage)
+      : undefined;
+    if (input.image && !imageResult) throw new Error('Image processing is unavailable');
+    const imageProductIds = imageResult?.selectedProduct
+      ? [imageResult.selectedProduct.productId]
+      : imageResult?.confidenceLevel === 'medium'
+        ? imageResult.matches.map((match) => match.productId)
+        : [];
+
     const userMessage = await this.messages.addMessage({
       conversationId: conversation.id,
       customerId: customer.id,
       role: 'user',
-      content: input.message,
+      content: customerMessage,
+      messageType: input.image ? 'image' : 'text',
+      ...(imageResult
+        ? {
+            metadata: {
+              image: imageResult.image,
+              productIds: imageProductIds,
+              imageAnalysis: {
+                status: imageResult.analysisStatus,
+                confidence: imageResult.analysis?.confidence ?? 0,
+                matchConfidence: imageResult.selectedProduct?.score ?? imageResult.matches[0]?.score ?? 0,
+                matchedBy: imageResult.selectedProduct?.reasons ?? imageResult.matches[0]?.reasons ?? [],
+              },
+            },
+          }
+        : {}),
     });
     const memory = await this.context.buildContext(conversation.id, {
       excludeMessageId: userMessage.id,
@@ -87,12 +118,15 @@ export class ChatService {
       ? (customer.language as 'bn' | 'banglish' | 'en')
       : 'auto';
     const response = await this.ai.respond({
-      message: input.message,
+      message: customerMessage,
       conversationId: conversation.id,
       customerId: customer.id,
       language,
       conversationHistory: memory.history,
-      contextProductIds: memory.activeProductIds,
+      contextProductIds: [...new Set([...imageProductIds, ...memory.activeProductIds])].slice(
+        0,
+        this.maxProductIds,
+      ),
       customerContext: { name: customer.name, language: customer.language },
     });
 
@@ -123,6 +157,13 @@ export class ChatService {
       customerId: customer.id,
       conversationStatus: response.requiresHuman ? ('human' as const) : ('active' as const),
       ...response,
+      products: response.products.map((product) => {
+        const match = imageResult?.matches.find((item) => item.productId === product.id);
+        return match
+          ? { ...product, matchConfidence: match.score, matchReasons: match.reasons }
+          : product;
+      }),
+      ...(imageResult ? { imageRecognition: imageResult } : {}),
     };
   }
 }

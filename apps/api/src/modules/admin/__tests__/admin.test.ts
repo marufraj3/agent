@@ -103,14 +103,16 @@ test('Knowledge Base API denies unauthenticated requests before database access'
 });
 
 test('AI endpoints deny unauthenticated requests before AI or database access', async () => {
-  const [{ aiTestRoutes }, { chatRoutes }] = await Promise.all([
+  const [{ aiTestRoutes }, { chatRoutes }, { imageRoutes }] = await Promise.all([
     import('../../ai/routes/ai-test.routes.js'),
     import('../../conversations/routes/chat.routes.js'),
+    import('../../images/routes/image.routes.js'),
   ]);
   const app = Fastify();
   app.decorate('prisma', {} as never);
   await app.register(aiTestRoutes);
   await app.register(chatRoutes);
+  await app.register(imageRoutes);
 
   const testResponse = await app.inject({
     method: 'POST',
@@ -126,7 +128,14 @@ test('AI endpoints deny unauthenticated requests before AI or database access', 
     },
   });
 
+  const imageResponse = await app.inject({
+    method: 'POST',
+    url: '/api/ai/analyze-image',
+    payload: { imageUrl: 'https://example.com/product.jpg' },
+  });
+
   assert.equal(testResponse.statusCode, 401);
   assert.equal(chatResponse.statusCode, 401);
+  assert.equal(imageResponse.statusCode, 401);
   await app.close();
 });

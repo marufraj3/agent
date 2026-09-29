@@ -63,6 +63,8 @@ export interface AIProductReference {
   productName: string;
   productCode: string;
   image: string | null;
+  matchConfidence?: number;
+  matchReasons?: string[];
 }
 
 export interface AIResponse extends ModelAIResponse {

@@ -9,8 +9,18 @@ export interface AIProviderResponse {
   model: string;
 }
 
+export interface AIProviderImage {
+  data: string;
+  mimeType: 'image/jpeg' | 'image/png' | 'image/webp';
+}
+
+export interface AIImageProviderRequest extends AIProviderRequest {
+  image: AIProviderImage;
+}
+
 export interface AIProvider {
   readonly name: string;
   readonly model: string;
   generateStructured(request: AIProviderRequest): Promise<AIProviderResponse>;
+  analyzeImage?(request: AIImageProviderRequest): Promise<AIProviderResponse>;
 }

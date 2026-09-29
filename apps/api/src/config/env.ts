@@ -40,10 +40,17 @@ const envSchema = z.object({
   AI_MAX_PRODUCTS: z.coerce.number().int().min(1).max(10).default(5),
   AI_TEST_RATE_LIMIT_PER_MINUTE: z.coerce.number().int().min(1).max(300).default(30),
   CONVERSATION_HISTORY_LIMIT: z.coerce.number().int().min(1).max(100).default(20),
+  MAX_IMAGE_SIZE_MB: z.coerce.number().positive().max(25).default(10),
+  IMAGE_REQUEST_TIMEOUT_MS: z.coerce.number().int().min(1_000).max(60_000).default(15_000),
+  IMAGE_MATCH_HIGH_THRESHOLD: z.coerce.number().min(0.5).max(1).default(0.85),
+  IMAGE_MATCH_MEDIUM_THRESHOLD: z.coerce.number().min(0.3).max(1).default(0.65),
   WEBSITE_API_BASE_URL: z.url().default('https://sells.alzeena.com.bd/public/api'),
   PRODUCT_FEED_TIMEOUT_MS: z.coerce.number().int().min(1_000).max(120_000).default(30_000),
   PRODUCT_FEED_RETRIES: z.coerce.number().int().min(0).max(5).default(3),
   PRODUCT_FEED_MAX_PAGES: z.coerce.number().int().min(1).max(10_000).default(1_000),
+}).refine((values) => values.IMAGE_MATCH_MEDIUM_THRESHOLD < values.IMAGE_MATCH_HIGH_THRESHOLD, {
+  message: 'IMAGE_MATCH_MEDIUM_THRESHOLD must be lower than IMAGE_MATCH_HIGH_THRESHOLD',
+  path: ['IMAGE_MATCH_MEDIUM_THRESHOLD'],
 });
 
 const result = envSchema.safeParse(process.env);

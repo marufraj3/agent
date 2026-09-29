@@ -31,6 +31,7 @@ const product: CatalogSearchProduct = {
   productName: "APL26 Messi White Men's Polo",
   productCode: 'APL26 Messi White',
   slug: 'apl26-messi-white-mens-polo',
+  productDetails: 'Messi polo shirt',
   productStatus: '1',
   active: true,
   sellPrice: '1250.00',

@@ -7,6 +7,7 @@ import { SystemLogAIEventLogger } from './ai-event-logger.js';
 import { AIService } from './ai.service.js';
 import { ProductContextService } from './product-context.service.js';
 import { PromptBuilder } from './prompt-builder.js';
+import type { AIProvider } from './providers/ai-provider.js';
 import { GeminiProvider } from './providers/gemini.provider.js';
 import { RuleResponseService } from './rule-response.service.js';
 
@@ -14,8 +15,8 @@ interface AILogger {
   warn(bindings: object, message?: string): void;
 }
 
-export function createAIService(prisma: PrismaClient, logger: AILogger): AIService {
-  const provider = env.GEMINI_API_KEY
+export function createAIProvider(): AIProvider | undefined {
+  return env.GEMINI_API_KEY
     ? new GeminiProvider({
         apiKey: env.GEMINI_API_KEY,
         model: env.GEMINI_MODEL,
@@ -24,6 +25,10 @@ export function createAIService(prisma: PrismaClient, logger: AILogger): AIServi
         timeoutMs: env.GEMINI_TIMEOUT_MS,
       })
     : undefined;
+}
+
+export function createAIService(prisma: PrismaClient, logger: AILogger): AIService {
+  const provider = createAIProvider();
 
   return new AIService({
     knowledgeBase: new KnowledgeBaseService(prisma),

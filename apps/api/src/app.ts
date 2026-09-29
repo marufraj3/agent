@@ -8,6 +8,7 @@ import { adminRoutes } from './modules/admin/routes/admin.routes.js';
 import { aiTestRoutes } from './modules/ai/routes/ai-test.routes.js';
 import { chatRoutes } from './modules/conversations/routes/chat.routes.js';
 import { conversationAdminRoutes } from './modules/conversations/routes/conversation-admin.routes.js';
+import { imageRoutes } from './modules/images/routes/image.routes.js';
 import { productRoutes } from './modules/products/routes/product.routes.js';
 import { productSyncRoutes } from './modules/products/routes/product-sync.routes.js';
 import { healthRoutes } from './routes/health.js';
@@ -25,6 +26,7 @@ export async function buildApp(): Promise<FastifyInstance> {
   await app.register(aiTestRoutes);
   await app.register(chatRoutes);
   await app.register(conversationAdminRoutes);
+  await app.register(imageRoutes);
   await app.register(productRoutes);
   await app.register(productSyncRoutes);
 

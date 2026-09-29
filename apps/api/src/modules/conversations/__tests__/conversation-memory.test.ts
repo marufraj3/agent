@@ -210,6 +210,77 @@ test('conversation context extracts recent product references from message metad
   assert.equal(context?.customer.name, 'Rahim');
 });
 
+test('an identified image product is persisted and reused by the next conversation turn', async () => {
+  const memory = createMemoryPrisma();
+  const ai = new CapturingAI();
+  const imageProducts = {
+    identify: async () => ({
+      image: { mimeType: 'image/webp', sizeBytes: 1_024, source: 'test', temporary: true },
+      analysis: {
+        productName: 'TX170 Messi Fan Edition Polo',
+        productCode: 'TX170',
+        brand: 'Adidas',
+        category: 'Mens Fashion',
+        subCategory: 'Polo',
+        color: 'Blue',
+        visibleText: ['TX170'],
+        designKeywords: ['Messi'],
+        sizeVisible: null,
+        priceVisible: '1250',
+        confidence: 0.96,
+      },
+      analysisStatus: 'completed',
+      confidenceLevel: 'high',
+      matches: [
+        {
+          productId: 6238,
+          score: 0.96,
+          reasons: ['product_code_exact', 'product_name_exact'],
+          product: { id: 6238 },
+          availability: { id: 6238, sizes: [] },
+        },
+      ],
+      selectedProduct: {
+        productId: 6238,
+        score: 0.96,
+        reasons: ['product_code_exact', 'product_name_exact'],
+        product: { id: 6238 },
+        availability: { id: 6238, sizes: [] },
+      },
+    }),
+  };
+  const chat = new ChatService(
+    memory.prisma,
+    ai as unknown as AIService,
+    20,
+    5,
+    imageProducts as never,
+  );
+
+  await chat.send({
+    customer: { platform: 'test', platformUserId: 'image-user' },
+    channel: 'test',
+    message: 'এটার দাম কত?',
+    image: {
+      type: 'image',
+      url: 'https://example.com/tx170.webp',
+      mimeType: 'image/webp',
+      source: 'test',
+    },
+  });
+  await chat.send({
+    customer: { platform: 'test', platformUserId: 'image-user' },
+    channel: 'test',
+    message: 'M size আছে?',
+  });
+
+  assert.equal(memory.messages[0]?.messageType, 'IMAGE');
+  assert.deepEqual(memory.messages[0]?.metadata.productIds, [6238]);
+  assert.equal(ai.inputs[0]?.message, 'এটার দাম কত?');
+  assert.deepEqual(ai.inputs[0]?.contextProductIds, [6238]);
+  assert.deepEqual(ai.inputs[1]?.contextProductIds, [6238]);
+});
+
 test('persistent chat passes prior history and product metadata to the existing AI service', async () => {
   const memory = createMemoryPrisma();
   const ai = new CapturingAI();
