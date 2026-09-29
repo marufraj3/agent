@@ -28,6 +28,7 @@ export class AdminInboxService {
     prisma: PrismaClient,
     private readonly delivery = new MessageDeliveryService(),
     private readonly actorId = DEFAULT_ADMIN_ACTOR,
+    private readonly messengerPageId?: string,
   ) {
     this.db = prisma as any;
     this.handovers = new HumanHandoverService(prisma);
@@ -136,13 +137,7 @@ export class AdminInboxService {
     });
     if (!conversation) throw new InboxError('Conversation not found', 'CONVERSATION_NOT_FOUND', 404);
     if (conversation.status !== 'HUMAN') throw new InboxError('Human replies require a human-owned conversation', 'CONVERSATION_NOT_HUMAN', 409);
-    const delivery = await this.delivery.sendMessage({
-      conversationId,
-      channel: conversation.channel,
-      recipientId: conversation.customer.platformUserId,
-      content,
-    });
-    return this.db.$transaction(async (tx: any) => {
+    const pending = await this.db.$transaction(async (tx: any) => {
       const message = await tx.message.create({
         data: {
           conversationId,
@@ -150,12 +145,43 @@ export class AdminInboxService {
           role: 'HUMAN',
           content,
           messageType: 'TEXT',
-          metadata: { delivery },
+          metadata: { delivery: { status: 'pending', provider: conversation.channel === 'MESSENGER' ? 'facebook-messenger' : 'local-test' } },
         },
       });
       await tx.conversation.update({
         where: { id: conversationId }, data: { lastMessageAt: new Date(), unreadForAdmin: false },
       });
+      return message;
+    });
+    const delivery = await this.delivery.sendMessage({
+      conversationId,
+      channel: conversation.channel,
+      recipientId: conversation.customer.platformUserId,
+      content,
+    });
+    return this.db.$transaction(async (tx: any) => {
+      const message = await tx.message.update({
+        where: { id: pending.id },
+        data: {
+          metadata: { delivery },
+          ...(delivery.providerMessageId ? { externalMessageId: delivery.providerMessageId } : {}),
+        },
+      });
+      if (conversation.channel === 'MESSENGER') {
+        await tx.messengerEventLog.create({
+          data: {
+            externalEventId: `outbound:${message.id}`,
+            externalMessageId: delivery.providerMessageId ?? null,
+            eventType: 'outbound.human',
+            pageId: this.messengerPageId ?? 'unknown',
+            senderId: conversation.customer.platformUserId,
+            status: delivery.status === 'sent' ? 'PROCESSED' : 'FAILED',
+            localOutboundMessageId: message.id,
+            errorMessage: delivery.status === 'failed' ? delivery.errorCode ?? 'Messenger delivery failed' : null,
+            processedAt: new Date(),
+          },
+        });
+      }
       await this.log(tx, 'ADMIN_HUMAN_REPLY', conversationId, {
         messageId: message.id, deliveryStatus: delivery.status, provider: delivery.provider, actorId: this.actorId,
       });

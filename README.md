@@ -1,8 +1,8 @@
 # Alzeena Fashion Sales Agent
 
-Production-oriented foundation for the Alzeena Fashion AI sales agent. The repository currently contains **Steps 1–10**: the web application, API, infrastructure configuration, PostgreSQL/Prisma data layer, product synchronization, protected business administration, the modular Gemini-backed AI core, persistent multimodal conversation memory, the deterministic Order Engine, and a human-handover Admin Inbox.
+Production-oriented foundation for the Alzeena Fashion AI sales agent. The repository currently contains **Steps 1–11**: the web application, API, infrastructure configuration, PostgreSQL/Prisma data layer, product synchronization, protected business administration, the modular Gemini-backed AI core, persistent multimodal conversation memory, the deterministic Order Engine, human-handover Admin Inbox, and a queued Facebook Messenger channel adapter.
 
-Step 10 adds structured handovers, an enforced AI/human ownership lock, assignment, unread state, internal notifications, local outbound-delivery abstraction, searchable conversation context, and protected human replies. It does not add Facebook/Meta transport, webhooks, WhatsApp, voice replies, browser push, WebSockets, payments, or analytics.
+Step 11 adds signed Meta webhooks, event normalization and deduplication, a BullMQ Messenger worker, text/image/voice routing through the existing conversation system, safe outbound delivery, and real Messenger delivery for admin replies. It does not add WhatsApp, Instagram DM, voice replies, campaigns, broadcasts, comment automation, or analytics.
 
 ## Architecture
 
@@ -359,6 +359,74 @@ Set `AI_MAX_CONSECUTIVE_FAILURES` (default `2`) and `INBOX_PAGE_SIZE` (default `
 npm run db:migrate:deploy
 npm run prisma:generate
 ```
+
+## Step 11 Facebook Messenger and Meta Webhooks
+
+Messenger is an isolated channel adapter. The webhook validates Meta's HMAC SHA-256 signature against the exact raw request bytes, normalizes supported Page `messages` events, persists a minimal event log, deduplicates by Meta message ID, queues `messenger-events`, and immediately acknowledges Meta. The Messenger worker invokes the same `ChatService`, image/audio pipelines, Product DB, Order Engine, and Human Handover used by existing channels.
+
+Endpoints:
+
+```text
+GET  /api/webhooks/facebook
+POST /api/webhooks/facebook
+GET  /api/admin/integrations/facebook/status
+POST /api/admin/test/messenger-event
+```
+
+The protected status page is `/admin/integrations/facebook`. It displays only Page ID, Graph API version, webhook/outbound timestamps, and a sanitized last error. Secrets are never returned.
+
+Required server configuration:
+
+```env
+FACEBOOK_VERIFY_TOKEN=<a-long-random-value-you-choose>
+FACEBOOK_APP_ID=<meta-app-id>
+FACEBOOK_APP_SECRET=<meta-app-secret>
+FACEBOOK_PAGE_ID=<facebook-page-id>
+FACEBOOK_PAGE_ACCESS_TOKEN=<page-access-token>
+FACEBOOK_GRAPH_API_VERSION=v25.0
+FACEBOOK_SEND_TIMEOUT_MS=15000
+MESSENGER_WEBHOOK_RATE_LIMIT_PER_MINUTE=1000
+```
+
+Meta's current Messenger documentation identifies Graph API `v25.0` as current and requires a Page access token obtained by a person with the Page `MESSAGE` task plus the `pages_messaging` permission for the Send API. Follow the current official documentation rather than copying old API versions:
+
+- Send API: <https://developers.facebook.com/docs/messenger-platform/reference/send-api/>
+- Messenger quick start and webhook payloads: <https://developers.facebook.com/docs/messenger-platform/getting-started/quick-start/>
+- Messenger changelog/version: <https://developers.facebook.com/docs/messenger-platform/changelog/>
+
+### Meta setup checklist
+
+1. Create or select a Meta Developer App and add the **Messenger** product.
+2. Connect the Facebook Page that the business controls.
+3. Generate a Page access token for a person with the Page `MESSAGE` task and ensure the app has the officially required `pages_messaging` permission. Use `pages_manage_metadata` only where Meta's current Page subscription setup requires it.
+4. Set the callback to `https://YOUR-HTTPS-HOST/api/webhooks/facebook` and enter the exact `FACEBOOK_VERIFY_TOKEN`.
+5. Select the **Page** webhook object and subscribe to the `messages` field. Add other fields only when their event types are implemented.
+6. Complete Meta App Review/Advanced Access where Meta requires it for people without roles on the app/Page. Meta's current changelog notes different review behavior when an app is used only with its own Page; verify this in the dashboard for the specific app.
+7. Keep App Secret and Page access token only in the backend environment, restart API and worker, and verify `/admin/integrations/facebook`.
+
+### Local Messenger testing
+
+```bash
+docker compose up -d postgres redis
+npm run db:migrate:deploy
+npm run prisma:generate
+npm run dev:api
+npm run dev:web
+npm run dev:messenger-worker
+```
+
+Expose port 4000 through a trusted HTTPS development tunnel, without committing a tunnel token. Configure the resulting HTTPS callback in Meta, verify the token, subscribe the Page, then send a message to the Page. The frontend remains on port 3000. The admin-protected fixture endpoint uses the same queue and worker pipeline:
+
+```bash
+curl -X POST http://localhost:4000/api/admin/test/messenger-event \
+  -H "content-type: application/json" \
+  -H "x-admin-password: $ADMIN_PASSWORD" \
+  --data '{"senderId":"test-user-001","pageId":"YOUR_PAGE_ID","messageId":"test-message-001","text":"Messi polo কত?"}'
+```
+
+The test fixture does not bypass AI, conversation, order, or handover logic. Actual webhook tests must use `X-Hub-Signature-256`; production signature validation cannot be disabled. Messenger delivery retries only known temporary network, timeout, rate-limit, transient Meta, and HTTP 5xx failures. A retry with an already-created local response performs delivery only and never repeats AI/order processing.
+
+Apply `20260929233000_facebook_messenger` and run the dedicated worker before enabling the webhook. Facebook media URLs are passed immediately to the existing bounded image/audio download pipelines and are not exposed through public APIs or stored as raw webhook payloads.
 
 ## Prerequisites
 

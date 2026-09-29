@@ -222,8 +222,9 @@ model Message {
   role           MessageRole
   content        String       @db.Text
   messageType    MessageType  @default(TEXT) @map("message_type")
-  metadata       Json?        @db.JsonB
-  createdAt      DateTime     @default(now()) @map("created_at")
+  metadata          Json?        @db.JsonB
+  externalMessageId String?      @unique @map("external_message_id") @db.VarChar(255)
+  createdAt         DateTime     @default(now()) @map("created_at")
   conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
   customer       Customer?    @relation(fields: [customerId], references: [id], onDelete: SetNull)
 
@@ -289,6 +290,35 @@ model AdminNotification {
   @@index([readAt, createdAt])
   @@index([conversationId, createdAt])
   @@map("admin_notifications")
+}
+
+enum MessengerEventStatus {
+  RECEIVED        @map("received")
+  QUEUED          @map("queued")
+  PROCESSING      @map("processing")
+  PROCESSED       @map("processed")
+  DELIVERY_FAILED @map("delivery_failed")
+  FAILED          @map("failed")
+  IGNORED         @map("ignored")
+}
+
+model MessengerEventLog {
+  id                     String               @id @default(uuid()) @db.Uuid
+  externalEventId        String               @unique @map("external_event_id") @db.VarChar(255)
+  externalMessageId      String?              @map("external_message_id") @db.VarChar(255)
+  eventType              String               @map("event_type") @db.VarChar(100)
+  pageId                 String               @map("page_id") @db.VarChar(100)
+  senderId               String?              @map("sender_id") @db.VarChar(100)
+  status                 MessengerEventStatus @default(RECEIVED)
+  localOutboundMessageId String?              @map("local_outbound_message_id") @db.Uuid
+  errorMessage           String?              @map("error_message") @db.VarChar(500)
+  receivedAt             DateTime             @default(now()) @map("received_at")
+  processedAt            DateTime?            @map("processed_at")
+
+  @@index([status, receivedAt])
+  @@index([pageId, receivedAt])
+  @@index([externalMessageId])
+  @@map("messenger_event_logs")
 }
 
 enum OrderStatus {

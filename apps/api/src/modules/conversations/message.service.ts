@@ -14,6 +14,7 @@ export interface AddMessageInput {
   content: string;
   messageType?: MessageTypeName;
   metadata?: JsonMetadata;
+  externalMessageId?: string | null;
 }
 
 export class MessageService {
@@ -30,7 +31,8 @@ export class MessageService {
           content: input.content,
           messageType: messageTypeToPrisma[input.messageType ?? 'text'],
           ...(input.metadata !== undefined ? { metadata: input.metadata } : {}),
-        },
+          ...(input.externalMessageId ? { externalMessageId: input.externalMessageId } : {}),
+        } as any,
       });
       await (transaction as any).conversation.update({
         where: { id: input.conversationId },
@@ -49,14 +51,15 @@ export class MessageService {
 
   updateMessage(
     id: string,
-    input: { content?: string; metadata?: JsonMetadata },
+    input: { content?: string; metadata?: JsonMetadata; externalMessageId?: string },
   ) {
     return this.prisma.message.update({
       where: { id },
       data: {
         ...(input.content !== undefined ? { content: input.content } : {}),
         ...(input.metadata !== undefined ? { metadata: input.metadata } : {}),
-      },
+        ...(input.externalMessageId !== undefined ? { externalMessageId: input.externalMessageId } : {}),
+      } as any,
     });
   }
 

@@ -7,9 +7,11 @@
   "scripts": {
     "dev": "tsx watch src/server.ts",
     "dev:worker": "tsx watch src/workers/product-sync.worker.ts",
+    "dev:messenger-worker": "tsx watch src/workers/messenger-events.worker.ts",
     "build": "tsc -p tsconfig.json",
     "start": "node dist/server.js",
     "start:worker": "node dist/workers/product-sync.worker.js",
+    "start:messenger-worker": "node dist/workers/messenger-events.worker.js",
     "test": "node --import tsx --test src/modules/*/__tests__/*.test.ts",
     "verify:product-sync": "tsx src/scripts/verify-product-sync.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit"

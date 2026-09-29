@@ -18,6 +18,7 @@ export default function AdminLayout({ children }: Readonly<{ children: React.Rea
             {([
               ['Knowledge Base', '/admin/knowledge-base'],
               ['Settings', '/admin/settings'],
+              ['Facebook', '/admin/integrations/facebook'],
               ['AI Test', '/admin/ai-test'],
               ['Customers', '/admin/customers'],
               ['Inbox', '/admin/inbox'],

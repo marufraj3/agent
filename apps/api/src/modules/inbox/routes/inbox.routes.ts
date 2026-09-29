@@ -3,9 +3,13 @@ import type { ZodType } from 'zod';
 import { env } from '../../../config/env.js';
 import { AppError } from '../../../errors/app-error.js';
 import { requireAdmin } from '../../admin/auth/require-admin.js';
+import { getMessengerConfig } from '../../channels/messenger/messenger.config.js';
+import { MessengerMessageDeliveryProvider } from '../../channels/messenger/messenger.delivery.js';
+import { MessengerSender } from '../../channels/messenger/messenger.sender.js';
 import { HumanHandoverService, DEFAULT_ADMIN_ACTOR } from '../../handovers/human-handover.service.js';
 import { HandoverError } from '../../handovers/handover.types.js';
 import { AdminInboxService, InboxError } from '../admin-inbox.service.js';
+import { MessageDeliveryService, TestMessageDeliveryProvider } from '../message-delivery.service.js';
 import {
   conversationParamsSchema, handoverListSchema, handoverRequestSchema,
   humanMessageSchema, inboxQuerySchema, noteSchema,
@@ -25,7 +29,16 @@ function mapError(error: unknown): never {
 }
 
 export async function inboxRoutes(app: FastifyInstance): Promise<void> {
-  const inbox = new AdminInboxService(app.prisma);
+  const messengerConfig = getMessengerConfig();
+  const inbox = new AdminInboxService(
+    app.prisma,
+    new MessageDeliveryService(
+      new TestMessageDeliveryProvider(),
+      { MESSENGER: new MessengerMessageDeliveryProvider(new MessengerSender(messengerConfig)) },
+    ),
+    DEFAULT_ADMIN_ACTOR,
+    messengerConfig.pageId,
+  );
   const handovers = new HumanHandoverService(app.prisma);
   const protectedRoute = { preHandler: requireAdmin };
 

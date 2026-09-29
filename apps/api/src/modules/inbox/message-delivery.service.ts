@@ -10,6 +10,7 @@ export interface DeliveryResult {
   provider: string;
   providerMessageId?: string;
   errorCode?: string;
+  retryable?: boolean;
 }
 
 export interface MessageDeliveryProvider {
@@ -25,6 +26,11 @@ export class TestMessageDeliveryProvider implements MessageDeliveryProvider {
 }
 
 export class MessageDeliveryService {
-  constructor(private readonly provider: MessageDeliveryProvider = new TestMessageDeliveryProvider()) {}
-  sendMessage(message: DeliveryMessage) { return this.provider.sendMessage(message); }
+  constructor(
+    private readonly fallback: MessageDeliveryProvider = new TestMessageDeliveryProvider(),
+    private readonly channelProviders: Partial<Record<DeliveryMessage['channel'], MessageDeliveryProvider>> = {},
+  ) {}
+  sendMessage(message: DeliveryMessage) {
+    return (this.channelProviders[message.channel] ?? this.fallback).sendMessage(message);
+  }
 }

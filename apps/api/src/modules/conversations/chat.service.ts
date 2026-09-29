@@ -26,6 +26,8 @@ export interface ChatInput {
   channel: ConversationChannelName;
   conversationId?: string;
   newConversation?: boolean;
+  externalMessageId?: string;
+  sourceMetadata?: import('./conversation.types.js').JsonMetadata;
 }
 
 export class ConversationAccessError extends Error {
@@ -134,9 +136,11 @@ export class ChatService {
         role: 'user',
         content: initialContent,
         messageType: input.audio ? 'audio' : input.image ? 'image' : 'text',
-        ...(input.image || input.audio
+        externalMessageId: input.externalMessageId,
+        ...(input.image || input.audio || input.sourceMetadata
           ? {
               metadata: {
+                ...(input.sourceMetadata && typeof input.sourceMetadata === 'object' && !Array.isArray(input.sourceMetadata) ? input.sourceMetadata : {}),
                 humanLock: true,
                 ...(input.image
                   ? { image: { source: input.image.source ?? 'unknown', url: null } }
@@ -180,6 +184,7 @@ export class ChatService {
       ? await this.findReusableTranscription(conversation.id, preparedAudio.sha256)
       : null;
     const baseMetadata = {
+      ...(input.sourceMetadata && typeof input.sourceMetadata === 'object' && !Array.isArray(input.sourceMetadata) ? input.sourceMetadata : {}),
       ...(imageResult
         ? {
             image: imageResult.image,
@@ -212,7 +217,8 @@ export class ChatService {
       role: 'user',
       content: initialContent,
       messageType: input.audio ? 'audio' : input.image ? 'image' : 'text',
-      ...(input.audio || input.image ? { metadata: baseMetadata } : {}),
+      externalMessageId: input.externalMessageId,
+      ...(input.audio || input.image || input.sourceMetadata ? { metadata: baseMetadata } : {}),
     });
 
     let transcription: Transcription | undefined;
@@ -333,7 +339,7 @@ export class ChatService {
       });
     }
 
-    await this.messages.addMessage({
+    const assistantMessage = await this.messages.addMessage({
       conversationId: conversation.id,
       customerId: customer.id,
       role: 'assistant',
@@ -376,6 +382,7 @@ export class ChatService {
       conversationId: conversation.id,
       customerId: customer.id,
       conversationStatus: response.requiresHuman ? ('human' as const) : ('active' as const),
+      assistantMessageId: assistantMessage.id,
       ...response,
       products: response.products.map((product) => {
         const match = imageResult?.matches.find((item) => item.productId === product.id);

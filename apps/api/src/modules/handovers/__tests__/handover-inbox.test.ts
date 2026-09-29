@@ -135,7 +135,7 @@ test('conversation detail includes existing orders, image context, and voice tra
 });
 test('admin human reply is delivered locally and stored with HUMAN role', async () => {
   let saved: any; let logged: any;
-  const tx: any = { message: { create: async ({ data }: any) => { saved = { id: 'm', ...data }; return saved; } }, conversation: { update: async () => ({}) }, systemLog: { create: async ({ data }: any) => { logged = data; } } };
+  const tx: any = { message: { create: async ({ data }: any) => { saved = { id: 'm', ...data }; return saved; }, update: async ({ data }: any) => Object.assign(saved, data) }, conversation: { update: async () => ({}) }, systemLog: { create: async ({ data }: any) => { logged = data; } } };
   const db: any = { conversation: { findUnique: async () => ({ id: 'v', status: 'HUMAN', channel: 'TEST', customerId: 'c', customer: { platformUserId: 'u' } }) }, $transaction: async (callback: any) => callback(tx) };
   const delivery = new MessageDeliveryService({ name: 'test', sendMessage: async () => ({ status: 'sent', provider: 'test', providerMessageId: 'p1' }) });
   const result = await new AdminInboxService(db, delivery).sendHumanMessage('v', 'জি ভাই');

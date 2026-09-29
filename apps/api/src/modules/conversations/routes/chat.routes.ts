@@ -2,41 +2,19 @@ import type { FastifyInstance } from 'fastify';
 import { env } from '../../../config/env.js';
 import { AppError } from '../../../errors/app-error.js';
 import { requireAdmin } from '../../admin/auth/require-admin.js';
-import { createAIService } from '../../ai/ai.factory.js';
 import { enforceAIRateLimit } from '../../ai/ai-rate-limit.js';
-import { createVoiceUnderstandingService } from '../../audio/audio.factory.js';
 import { AudioFetchError } from '../../audio/audio.service.js';
 import { AudioValidationError } from '../../audio/audio-validation.service.js';
-import { createImageProductService } from '../../images/image.factory.js';
 import { ImageFetchError } from '../../images/image.service.js';
-import { HumanHandoverService } from '../../handovers/human-handover.service.js';
-import { OrderConversationService } from '../../orders/order-conversation.service.js';
-import { OrderService } from '../../orders/order.service.js';
 import { OrderEngineError } from '../../orders/order.types.js';
-import { WebsiteOrderApiClient } from '../../orders/website-order-api.client.js';
 import { ImageValidationError } from '../../images/image-validation.service.js';
-import { ChatService, ConversationAccessError } from '../chat.service.js';
+import { createChatService } from '../chat.factory.js';
+import { ConversationAccessError } from '../chat.service.js';
 import { chatRequestSchema } from '../conversation.schemas.js';
 import { conversationChannels } from '../conversation.types.js';
 
 export async function chatRoutes(app: FastifyInstance): Promise<void> {
-  const chat = new ChatService(
-    app.prisma,
-    createAIService(app.prisma, app.log),
-    env.CONVERSATION_HISTORY_LIMIT,
-    env.AI_MAX_PRODUCTS,
-    createImageProductService(app.prisma),
-    createVoiceUnderstandingService(app.prisma),
-    new OrderConversationService(
-      new OrderService(
-        app.prisma,
-        new WebsiteOrderApiClient(env.ORDER_API_TIMEOUT_MS),
-        app.log,
-      ),
-    ),
-    new HumanHandoverService(app.prisma),
-    env.AI_MAX_CONSECUTIVE_FAILURES,
-  );
+  const chat = createChatService(app.prisma, app.log);
 
   app.post(
     '/api/ai/chat',
