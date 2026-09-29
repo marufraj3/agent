@@ -44,6 +44,19 @@ export class MessageService {
     return this.prisma.message.findUnique({ where: { id } });
   }
 
+  updateMessage(
+    id: string,
+    input: { content?: string; metadata?: JsonMetadata },
+  ) {
+    return this.prisma.message.update({
+      where: { id },
+      data: {
+        ...(input.content !== undefined ? { content: input.content } : {}),
+        ...(input.metadata !== undefined ? { metadata: input.metadata } : {}),
+      },
+    });
+  }
+
   async getRecentMessages(conversationId: string, limit: number) {
     const messages = await this.prisma.message.findMany({
       where: { conversationId },

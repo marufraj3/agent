@@ -99,6 +99,11 @@ function createMemoryPrisma() {
         return item;
       },
       findUnique: async ({ where }: any) => messages.find((item) => item.id === where.id) ?? null,
+      update: async ({ where, data }: any) => {
+        const item = messages.find((message) => message.id === where.id);
+        Object.assign(item, data);
+        return item;
+      },
       findMany: async ({ where, orderBy, take }: any) => {
         const items = messages.filter((item) => item.conversationId === where.conversationId);
         const descending = orderBy?.[0]?.createdAt === 'desc';
@@ -208,6 +213,154 @@ test('conversation context extracts recent product references from message metad
   assert.equal(context?.currentProducts[0]?.availability.sizes[0]?.stock, 24);
   assert.equal(context?.history[0]?.role, 'assistant');
   assert.equal(context?.customer.name, 'Rahim');
+});
+
+test('voice transcription, additional text, and product context persist across turns', async () => {
+  const memory = createMemoryPrisma();
+  const ai = new CapturingAI();
+  const transcriptions = [
+    { text: 'ভাই Messi polo টা কত?', language: 'mixed', confidence: 0.94, duration: 4 },
+    { text: 'এইটার XL আছে?', language: 'mixed', confidence: 0.92, duration: 2 },
+  ];
+  let transcriptionCalls = 0;
+  const voice = {
+    prepare: async () => ({
+      data: Buffer.from('OggS'),
+      base64: 'T2dnUw==',
+      mimeType: 'audio/ogg',
+      sizeBytes: 4,
+      duration: 4,
+      sha256: `voice-${transcriptionCalls}`,
+      source: 'test',
+      temporary: true,
+    }),
+    transcribe: async () => transcriptions[transcriptionCalls++]!,
+    isLowConfidence: () => false,
+    normalizeProductCodes: async (text: string) => ({
+      normalizedText: text,
+      verifiedCodes: [],
+      productIds: text.includes('Messi') ? [6238] : [],
+    }),
+  };
+  const chat = new ChatService(
+    memory.prisma,
+    ai as unknown as AIService,
+    20,
+    5,
+    undefined,
+    voice as never,
+  );
+
+  await chat.send({
+    customer: { platform: 'test', platformUserId: 'voice-user' },
+    channel: 'test',
+    message: 'M size-ও বলবেন',
+    audio: {
+      type: 'audio',
+      url: 'https://example.com/voice-1.ogg',
+      mimeType: 'audio/ogg',
+      source: 'test',
+    },
+  });
+  await chat.send({
+    customer: { platform: 'test', platformUserId: 'voice-user' },
+    channel: 'test',
+    audio: {
+      type: 'audio',
+      url: 'https://example.com/voice-2.ogg',
+      mimeType: 'audio/ogg',
+      source: 'test',
+    },
+  });
+
+  assert.equal(memory.messages[0]?.messageType, 'AUDIO');
+  assert.equal(memory.messages[0]?.metadata.transcription.text, 'ভাই Messi polo টা কত?');
+  assert.match(ai.inputs[0]?.message ?? '', /Additional written context: M size-ও বলবেন/);
+  assert.deepEqual(ai.inputs[0]?.contextProductIds, [6238]);
+  assert.deepEqual(ai.inputs[1]?.contextProductIds, [6238]);
+});
+
+test('reuses a persisted transcription for duplicate audio in the same conversation', async () => {
+  const memory = createMemoryPrisma();
+  const ai = new CapturingAI();
+  let calls = 0;
+  const voice = {
+    prepare: async () => ({
+      data: Buffer.from('OggS'), base64: 'T2dnUw==', mimeType: 'audio/ogg', sizeBytes: 4,
+      duration: 2, sha256: 'same-audio-hash', source: 'test', temporary: true,
+    }),
+    transcribe: async () => {
+      calls += 1;
+      return { text: 'Messi polo কত?', language: 'mixed', confidence: 0.95, duration: 2 };
+    },
+    isLowConfidence: () => false,
+    normalizeProductCodes: async (text: string) => ({ normalizedText: text, verifiedCodes: [], productIds: [6238] }),
+  };
+  const chat = new ChatService(memory.prisma, ai as unknown as AIService, 20, 5, undefined, voice as never);
+  const input = {
+    customer: { platform: 'test', platformUserId: 'duplicate-voice-user' },
+    channel: 'test' as const,
+    audio: { type: 'audio' as const, url: 'https://example.com/same.ogg', source: 'test' },
+  };
+  await chat.send(input);
+  await chat.send(input);
+  assert.equal(calls, 1);
+});
+
+test('failed voice transcription returns clarification without calling the AI core', async () => {
+  const memory = createMemoryPrisma();
+  const ai = new CapturingAI();
+  const voice = {
+    prepare: async () => ({
+      data: Buffer.from('OggS'), base64: 'T2dnUw==', mimeType: 'audio/ogg', sizeBytes: 4,
+      duration: null, sha256: 'failed-voice', source: 'test', temporary: true,
+    }),
+    transcribe: async () => { throw new Error('provider failed'); },
+    isLowConfidence: () => false,
+    normalizeProductCodes: async (text: string) => ({ normalizedText: text, verifiedCodes: [], productIds: [] }),
+  };
+  const chat = new ChatService(memory.prisma, ai as unknown as AIService, 20, 5, undefined, voice as never);
+  const result = await chat.send({
+    customer: { platform: 'test', platformUserId: 'failed-voice-user' },
+    channel: 'test',
+    audio: { type: 'audio', url: 'https://example.com/failed.ogg', source: 'test' },
+  });
+
+  assert.equal(result.requiresHuman, false);
+  assert.equal(result.action, 'request_voice_clarification');
+  assert.equal(ai.inputs.length, 0);
+  assert.equal(memory.messages[0]?.metadata.transcription.status, 'failed');
+});
+
+test('low-confidence voice is preserved but not interpreted by the AI core', async () => {
+  const memory = createMemoryPrisma();
+  const ai = new CapturingAI();
+  let normalizationCalls = 0;
+  const voice = {
+    prepare: async () => ({
+      data: Buffer.from('OggS'), base64: 'T2dnUw==', mimeType: 'audio/ogg', sizeBytes: 4,
+      duration: 2, sha256: 'unclear-voice', source: 'test', temporary: true,
+    }),
+    transcribe: async () => ({ text: 'TX one seventy maybe', language: 'mixed', confidence: 0.4, duration: 2 }),
+    isLowConfidence: () => true,
+    normalizeProductCodes: async (text: string) => {
+      normalizationCalls += 1;
+      return { normalizedText: text, verifiedCodes: ['TX170'], productIds: [6238] };
+    },
+  };
+  const chat = new ChatService(memory.prisma, ai as unknown as AIService, 20, 5, undefined, voice as never);
+  const result = await chat.send({
+    customer: { platform: 'test', platformUserId: 'unclear-voice-user' },
+    channel: 'test',
+    audio: { type: 'audio', url: 'https://example.com/unclear.ogg', source: 'test' },
+  });
+
+  assert.equal(result.requiresHuman, false);
+  assert.equal(result.action, 'request_voice_clarification');
+  assert.equal(ai.inputs.length, 0);
+  assert.equal(normalizationCalls, 0);
+  assert.equal(memory.messages[0]?.metadata.transcription.text, 'TX one seventy maybe');
+  assert.deepEqual(memory.messages[0]?.metadata.productIds, []);
 });
 
 test('an identified image product is persisted and reused by the next conversation turn', async () => {

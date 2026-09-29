@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { audioInputSchema } from '../audio/audio.types.js';
 import { imageInputSchema } from '../images/image.types.js';
 
 export const chatRequestSchema = z
@@ -16,13 +17,17 @@ export const chatRequestSchema = z
       .strict(),
     message: z.string().trim().min(1).max(4_000).optional(),
     image: imageInputSchema.optional(),
+    audio: audioInputSchema.optional(),
     channel: z.enum(['web', 'messenger', 'admin', 'test']).optional(),
     conversationId: z.uuid().optional(),
     newConversation: z.boolean().default(false),
   })
   .strict()
-  .refine((input) => Boolean(input.message || input.image), {
-    message: 'A message or image is required',
+  .refine((input) => Boolean(input.message || input.image || input.audio), {
+    message: 'A message, image, or audio input is required',
+  })
+  .refine((input) => !(input.image && input.audio), {
+    message: 'Send either image or audio media in one message, not both',
   });
 
 export const listQuerySchema = z.object({

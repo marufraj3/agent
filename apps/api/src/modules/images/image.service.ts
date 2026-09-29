@@ -1,6 +1,5 @@
 import { createHash } from 'node:crypto';
-import { isIP } from 'node:net';
-import { lookup } from 'node:dns/promises';
+import { PublicUrlService, UnsafePublicUrlError, type ResolveHost } from '../media/public-url.service.js';
 import type { ImageInput, PreparedImage } from './image.types.js';
 import {
   ImageValidationError,
@@ -9,45 +8,10 @@ import {
 } from './image-validation.service.js';
 
 type FetchLike = typeof fetch;
-type ResolveHost = (hostname: string) => Promise<string[]>;
 
 interface CacheEntry {
   expiresAt: number;
   image: PreparedImage;
-}
-
-function isPrivateIpv4(address: string): boolean {
-  const parts = address.split('.').map(Number);
-  if (parts.length !== 4 || parts.some((part) => !Number.isInteger(part) || part < 0 || part > 255)) {
-    return true;
-  }
-  const [a, b] = parts as [number, number, number, number];
-  return (
-    a === 0 ||
-    a === 10 ||
-    a === 127 ||
-    (a === 100 && b >= 64 && b <= 127) ||
-    (a === 169 && b === 254) ||
-    (a === 172 && b >= 16 && b <= 31) ||
-    (a === 192 && b === 168) ||
-    (a === 198 && (b === 18 || b === 19)) ||
-    a >= 224
-  );
-}
-
-function isPrivateAddress(address: string): boolean {
-  const normalized = address.toLowerCase().split('%')[0] ?? '';
-  if (isIP(normalized) === 4) return isPrivateIpv4(normalized);
-  if (isIP(normalized) !== 6) return true;
-  if (normalized === '::' || normalized === '::1') return true;
-  if (normalized.startsWith('fc') || normalized.startsWith('fd') || normalized.startsWith('fe8') || normalized.startsWith('fe9') || normalized.startsWith('fea') || normalized.startsWith('feb')) return true;
-  if (normalized.startsWith('::ffff:')) return isPrivateIpv4(normalized.slice(7));
-  return false;
-}
-
-async function defaultResolveHost(hostname: string): Promise<string[]> {
-  const records = await lookup(hostname, { all: true, verbatim: true });
-  return records.map((record) => record.address);
 }
 
 export class ImageFetchError extends Error {
@@ -59,13 +23,16 @@ export class ImageFetchError extends Error {
 
 export class ImageService {
   private readonly urlCache = new Map<string, CacheEntry>();
+  private readonly publicUrls: PublicUrlService;
 
   constructor(
     private readonly validation: ImageValidationService,
     private readonly timeoutMs: number,
     private readonly fetchImpl: FetchLike = fetch,
-    private readonly resolveHost: ResolveHost = defaultResolveHost,
-  ) {}
+    resolveHost?: ResolveHost,
+  ) {
+    this.publicUrls = new PublicUrlService(resolveHost);
+  }
 
   async prepare(input: ImageInput): Promise<PreparedImage> {
     this.validation.validateInput(input);
@@ -104,7 +71,14 @@ export class ImageService {
   ): Promise<PreparedImage> {
     let currentUrl = initialUrl;
     for (let redirects = 0; redirects <= 3; redirects += 1) {
-      await this.assertSafeUrl(currentUrl);
+      try {
+        await this.publicUrls.validate(currentUrl);
+      } catch (error) {
+        if (error instanceof UnsafePublicUrlError) {
+          throw new ImageValidationError(error.message, 'INVALID_IMAGE_URL');
+        }
+        throw error;
+      }
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), this.timeoutMs);
       try {
@@ -171,34 +145,6 @@ export class ImageService {
       reader.releaseLock();
     }
     return Buffer.concat(chunks, total);
-  }
-
-  private async assertSafeUrl(value: string): Promise<void> {
-    let url: URL;
-    try {
-      url = new URL(value);
-    } catch {
-      throw new ImageValidationError('Malformed image URL', 'INVALID_IMAGE_URL');
-    }
-    if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password) {
-      throw new ImageValidationError('Image URL must be a public HTTP(S) URL', 'INVALID_IMAGE_URL');
-    }
-    if (url.port && !['80', '443'].includes(url.port)) {
-      throw new ImageValidationError('Image URL uses a blocked port', 'INVALID_IMAGE_URL');
-    }
-    const hostname = url.hostname.toLowerCase();
-    if (hostname === 'localhost' || hostname.endsWith('.localhost') || hostname.endsWith('.local')) {
-      throw new ImageValidationError('Private image URLs are not allowed', 'INVALID_IMAGE_URL');
-    }
-    let addresses: string[];
-    try {
-      addresses = isIP(hostname) ? [hostname] : await this.resolveHost(hostname);
-    } catch {
-      throw new ImageFetchError('Image host could not be resolved');
-    }
-    if (addresses.length === 0 || addresses.some(isPrivateAddress)) {
-      throw new ImageValidationError('Private image URLs are not allowed', 'INVALID_IMAGE_URL');
-    }
   }
 
   private toPrepared(

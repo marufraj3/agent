@@ -9,13 +9,17 @@ export interface AIProviderResponse {
   model: string;
 }
 
-export interface AIProviderImage {
+export interface AIProviderMedia {
   data: string;
-  mimeType: 'image/jpeg' | 'image/png' | 'image/webp';
+  mimeType: string;
 }
 
 export interface AIImageProviderRequest extends AIProviderRequest {
-  image: AIProviderImage;
+  image: AIProviderMedia;
+}
+
+export interface AIAudioProviderRequest extends AIProviderRequest {
+  audio: AIProviderMedia;
 }
 
 export interface AIProvider {
@@ -23,4 +27,5 @@ export interface AIProvider {
   readonly model: string;
   generateStructured(request: AIProviderRequest): Promise<AIProviderResponse>;
   analyzeImage?(request: AIImageProviderRequest): Promise<AIProviderResponse>;
+  transcribeAudio?(request: AIAudioProviderRequest): Promise<AIProviderResponse>;
 }

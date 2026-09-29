@@ -1,8 +1,8 @@
 # Alzeena Fashion Sales Agent
 
-Production-oriented foundation for the future Alzeena Fashion AI sales agent. The repository currently contains **Steps 1–7**: the web application, API, infrastructure configuration, PostgreSQL/Prisma data layer, product-feed synchronization, protected Knowledge Base/business settings management, the modular Gemini-backed AI core, persistent customer/conversation memory, and product photo recognition.
+Production-oriented foundation for the future Alzeena Fashion AI sales agent. The repository currently contains **Steps 1–8**: the web application, API, infrastructure configuration, PostgreSQL/Prisma data layer, product-feed synchronization, protected Knowledge Base/business settings management, the modular Gemini-backed AI core, persistent conversation memory, product photo recognition, and voice-message understanding.
 
-Step 7 adds validated JPEG/PNG/WebP input, protected image fetching, structured Gemini Vision clue extraction, deterministic local-catalogue matching, image-aware chat, and product memory. It does not add Facebook/Meta transport, orders, voice processing, a human inbox, analytics, or marketing automation.
+Step 8 adds validated audio input, provider-independent speech-to-text, Gemini audio transcription, confidence safeguards, local product-code verification, and audio-aware conversation memory. It does not add Facebook/Meta transport, voice replies, orders, a human inbox, analytics, or marketing automation.
 
 ## Architecture
 
@@ -24,7 +24,7 @@ Step 7 adds validated JPEG/PNG/WebP input, protected image fetching, structured 
 └── tsconfig.base.json          # Shared TypeScript rules
 ```
 
-Future channels and capabilities (Facebook Messenger transport, orders, image/voice processing, and a human inbox) should be introduced as isolated modules. The AI provider, orchestration, prompt construction, local product context, persistent memory, and admin-managed instructions remain separate so providers and channels can change independently.
+Future channels and capabilities (Facebook Messenger transport, orders, voice replies, and a human inbox) should be introduced as isolated modules. The AI provider, orchestration, prompt construction, local product context, persistent memory, and admin-managed instructions remain separate so providers and channels can change independently.
 
 ## Step 2 database models
 
@@ -244,6 +244,50 @@ curl -X POST http://localhost:4000/api/ai/analyze-image \
 
 No database migration is required for Step 7 because the Step 6 `MessageType.IMAGE` and JSON metadata fields already support image messages. Configure `GEMINI_API_KEY`, apply existing migrations, and synchronize the local product catalogue before end-to-end visual testing. Exact product codes in captions can still resolve without a Vision call.
 
+## Step 8 voice-message understanding
+
+The channel-neutral voice flow reuses the existing AI core:
+
+```text
+audio URL or inline upload → MIME/signature/size/duration validation
+                           → protected bounded fetch and temporary buffer
+                           → SpeechToTextService → Gemini audio adapter
+                           → original-language transcription
+                           → verified local product-code normalization
+                           → conversation context and existing AIService
+                           → persisted text response
+```
+
+Supported inputs are OGG/Opus, MP3/MPEG, WAV, WebM, MP4, and M4A. Audio is not permanently stored. Message metadata retains only the detected MIME type, duration when available, source, transcription, language, confidence, and locally verified product codes/product IDs. URL and transcription caches are bounded and process-local.
+
+`SpeechToTextProvider` keeps transcription replaceable. The current adapter uses the existing `GeminiProvider` client and structured JSON output; controllers depend only on `VoiceUnderstandingService` and `SpeechToTextService`. Bangla, Banglish, English, and mixed speech are transcribed without translation.
+
+Protected transcription endpoint:
+
+```text
+POST /api/ai/transcribe
+```
+
+Example:
+
+```bash
+curl -X POST http://localhost:4000/api/ai/transcribe \
+  -H "content-type: application/json" \
+  -H "x-admin-password: $ADMIN_PASSWORD" \
+  --data '{
+    "audioUrl":"https://example.com/voice.ogg",
+    "mimeType":"audio/ogg"
+  }'
+```
+
+`POST /api/ai/chat` accepts an `audio` object with either a public `url` or base64 `data`, optional MIME type/duration, and a channel-neutral source. Written `message` text can accompany the voice as additional context. Successful transcriptions become the user message content; the original transcription remains in metadata. Low-confidence or failed transcription produces a clarification response without calling the sales AI or inventing text.
+
+Spoken code normalization is deliberately conservative. Candidates such as “TX one seventy” are converted only when the resulting code is confirmed against the local Product database. Transcription itself never supplies price, stock, size, availability, or pre-order facts.
+
+The `/admin/ai-test` page now supports audio upload, audio URL playback, transcription language/confidence, AI response, and follow-up memory. Conversation details display an audio indicator and saved transcription; no temporary server path is exposed.
+
+No database migration is required for Step 8 because the existing `MessageType.AUDIO` and JSON metadata support voice messages. Configure `GEMINI_API_KEY`, apply existing migrations, and synchronize products before end-to-end testing.
+
 ## Prerequisites
 
 - Node.js 20.9 or newer (Node.js 22 LTS recommended)
@@ -391,6 +435,10 @@ Run the compiled backend with `npm run start --workspace=@alzeena/api`. Run the 
 | `IMAGE_REQUEST_TIMEOUT_MS` | Timeout for public image URL downloads | Used |
 | `IMAGE_MATCH_HIGH_THRESHOLD` | Automatic product-selection confidence threshold | Used |
 | `IMAGE_MATCH_MEDIUM_THRESHOLD` | Candidate/clarification confidence threshold | Used |
+| `MAX_AUDIO_SIZE_MB` | Maximum downloaded or uploaded audio size | Used |
+| `MAX_AUDIO_DURATION_SECONDS` | Maximum accepted/detected audio duration | Used |
+| `AUDIO_REQUEST_TIMEOUT_MS` | Audio download and transcription timeout | Used |
+| `VOICE_TRANSCRIPTION_LOW_CONFIDENCE` | Clarification threshold for uncertain transcription | Used |
 | `META_PAGE_ACCESS_TOKEN` | Future Meta integration | Reserved |
 | `META_APP_SECRET` | Future Meta integration | Reserved |
 | `META_VERIFY_TOKEN` | Future webhook verification | Reserved |

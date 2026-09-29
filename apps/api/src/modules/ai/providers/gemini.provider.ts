@@ -1,5 +1,6 @@
 import { GoogleGenAI } from '@google/genai';
 import type {
+  AIAudioProviderRequest,
   AIImageProviderRequest,
   AIProvider,
   AIProviderRequest,
@@ -72,6 +73,38 @@ export class GeminiProvider implements AIProvider {
 
     const text = response.text?.trim();
     if (!text) throw new Error('Gemini returned an empty image analysis response');
+    return { text, model: this.config.model };
+  }
+
+  async transcribeAudio(request: AIAudioProviderRequest): Promise<AIProviderResponse> {
+    const response = await this.client.models.generateContent({
+      model: this.config.model,
+      contents: [
+        {
+          role: 'user',
+          parts: [
+            { text: request.prompt },
+            {
+              inlineData: {
+                data: request.audio.data,
+                mimeType: request.audio.mimeType,
+              },
+            },
+          ],
+        },
+      ],
+      config: {
+        systemInstruction: request.systemInstruction,
+        responseMimeType: 'application/json',
+        responseJsonSchema: request.responseJsonSchema,
+        temperature: 0,
+        maxOutputTokens: this.config.maxOutputTokens,
+        httpOptions: { timeout: this.config.timeoutMs },
+      },
+    });
+
+    const text = response.text?.trim();
+    if (!text) throw new Error('Gemini returned an empty audio transcription response');
     return { text, model: this.config.model };
   }
 }

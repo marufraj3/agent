@@ -6,6 +6,7 @@ import { AppError } from './errors/app-error.js';
 import { registerInfrastructure } from './infrastructure/register.js';
 import { adminRoutes } from './modules/admin/routes/admin.routes.js';
 import { aiTestRoutes } from './modules/ai/routes/ai-test.routes.js';
+import { audioRoutes } from './modules/audio/routes/audio.routes.js';
 import { chatRoutes } from './modules/conversations/routes/chat.routes.js';
 import { conversationAdminRoutes } from './modules/conversations/routes/conversation-admin.routes.js';
 import { imageRoutes } from './modules/images/routes/image.routes.js';
@@ -24,6 +25,7 @@ export async function buildApp(): Promise<FastifyInstance> {
   await app.register(healthRoutes);
   await app.register(adminRoutes);
   await app.register(aiTestRoutes);
+  await app.register(audioRoutes);
   await app.register(chatRoutes);
   await app.register(conversationAdminRoutes);
   await app.register(imageRoutes);
