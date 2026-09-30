@@ -9,7 +9,14 @@ export const prisma = globalForPrisma.prisma ?? new PrismaClient({
 });
 if (queryEvents) {
   const threshold = Math.max(50, Number(process.env.SLOW_QUERY_LOG_MS) || 500);
-  prisma.$on('query', (event: { duration: number; target: string }) => {
+  // Prisma's generated client erases event names when a cached global client is
+  // unioned with an event-enabled client. The runtime subscription remains
+  // valid because the development client above explicitly configures query
+  // events with `emit: 'event'`.
+  const eventClient = prisma as unknown as {
+    $on(event: 'query', callback: (event: { duration: number; target: string }) => void): void;
+  };
+  eventClient.$on('query', (event) => {
     if (event.duration >= threshold) console.warn(JSON.stringify({ event: 'DATABASE_SLOW_QUERY', durationMs: event.duration, target: event.target, timestamp: new Date().toISOString() }));
   });
 }
