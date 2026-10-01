@@ -124,10 +124,10 @@ goto failed
 
 :postgres_ready
 echo [OK] PostgreSQL is ready.
-echo [WAIT] Waiting for Redis...
-powershell -NoProfile -Command "$ok=$false; for($i=0; $i -lt 30; $i++){ $result = ^& docker compose exec -T redis redis-cli ping 2^>$null; if(($result -join '') -match 'PONG'){ $ok=$true; break }; Start-Sleep -Seconds 2 }; if(-not $ok){ exit 1 }"
+echo [CHECK] Checking Redis...
+docker compose exec -T redis redis-cli ping >nul 2>&1
 if errorlevel 1 (
-  echo [ERROR] Redis did not become ready in 60 seconds.
+  echo [ERROR] Redis is not ready. Run: docker compose exec -T redis redis-cli ping
   goto failed
 )
 echo [OK] Redis is ready.
