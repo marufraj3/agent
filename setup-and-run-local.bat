@@ -126,7 +126,8 @@ goto failed
 echo [OK] PostgreSQL is ready.
 echo [WAIT] Waiting for Redis...
 for /L %%I in (1,1,30) do (
-  docker compose exec -T redis redis-cli ping 2>nul | findstr /X "PONG" >nul && goto redis_ready
+  docker compose exec -T redis redis-cli ping >"%TEMP%\alzeena-redis-health.txt" 2>&1
+  findstr /X /C:"PONG" "%TEMP%\alzeena-redis-health.txt" >nul && goto redis_ready
   timeout /t 2 /nobreak >nul
 )
 echo [ERROR] Redis did not become ready in 60 seconds.
