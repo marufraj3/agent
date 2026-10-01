@@ -125,15 +125,11 @@ goto failed
 :postgres_ready
 echo [OK] PostgreSQL is ready.
 echo [WAIT] Waiting for Redis...
-for /L %%I in (1,1,30) do (
-  docker compose exec -T redis redis-cli ping >"%TEMP%\alzeena-redis-health.txt" 2>&1
-  findstr /X /C:"PONG" "%TEMP%\alzeena-redis-health.txt" >nul && goto redis_ready
-  timeout /t 2 /nobreak >nul
+powershell -NoProfile -Command "$ok=$false; for($i=0; $i -lt 30; $i++){ $result = ^& docker compose exec -T redis redis-cli ping 2^>$null; if(($result -join '') -match 'PONG'){ $ok=$true; break }; Start-Sleep -Seconds 2 }; if(-not $ok){ exit 1 }"
+if errorlevel 1 (
+  echo [ERROR] Redis did not become ready in 60 seconds.
+  goto failed
 )
-echo [ERROR] Redis did not become ready in 60 seconds.
-goto failed
-
-:redis_ready
 echo [OK] Redis is ready.
 
 echo [RUN] Generating the current Prisma Client...
